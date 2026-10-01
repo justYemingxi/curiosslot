@@ -1,0 +1,73 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+}
+
+version = '1.0.0'
+group = 'com.maidslot'
+
+base {
+    archivesName = 'curiosslot'
+}
+
+// Mojang 1.20.1 需要 Java 17
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+// 强制 UTF-8，避免中文注释/字符串在 GBK 环境下乱码
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+minecraft {
+    // 官方映射 1.20.1
+    mappings channel: 'official', version: '1.20.1'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                curiosslot {
+                    source sourceSets.main
+                }
+            }
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                curiosslot {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+repositories {
+    // Curios 官方 maven（备用，编译依赖也走本地 libs）
+    maven {
+        url = 'https://maven.theillusivec4.top/'
+    }
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.22'
+
+    // Curios API：编译依赖（运行时由玩家装 Curios 提供）
+    compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))
+}
+
+jar {
+    manifest {
+        attributes([
+                "Specification-Title"     : "curiosslot",
+                "Specification-Version"   : "1",
+                "Implementation-Title"    : "curiosslot",
+                "Implementation-Version"  : project.jar.archiveVersion,
+        ])
+    }
+}

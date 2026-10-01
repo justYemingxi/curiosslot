@@ -1,0 +1,28 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="curiosslot"
+version="1.0.0"
+displayName="Curios Slot"
+authors="maidslot"
+description='''
+局内为任意生物实体添加/设置 Curios 饰品栏位的独立模组。
+提供 /curiosslot set|add <槽位> <数量> <目标> 指令，可为女仆、玩家、怪物等任意 LivingEntity 增加或设置 Curios 饰品栏位。
+依赖 Curios API。
+'''
+
+[[dependencies.curiosslot]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.curiosslot]]
+modId="curios"
+mandatory=true
+versionRange="[5.0,)"
+ordering="NONE"
+side="BOTH"

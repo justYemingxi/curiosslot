@@ -1,0 +1,21 @@
+# Gradle 构建产物
+build/
+.gradle/
+
+# 本地工具（Gradle 发行版等，体积大，不入库）
+.tools/
+
+# 本地编译依赖（其他 mod 的 jar，如 Curios，请勿在公开仓库分发）
+libs/
+
+# 构建日志
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 操作系统
+Thumbs.db
+.DS_Store
