@@ -5,6 +5,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.curiosslot.network.CuriosSlotNetworking;
+import com.curiosslot.network.DebugOpenPacket;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -15,6 +17,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -24,25 +27,33 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
+import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.registries.ForgeRegistries;
 import top.theillusivec4.curios.api.CuriosApi;
 import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
+import top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler;
 import top.theillusivec4.curios.api.type.util.ISlotHelper;
 
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Curios Slot —— 局内为实体添加/设置 Curios 饰品栏位的 Forge mod (1.20.1)。
@@ -123,6 +134,13 @@ public class CuriosSlotMod {
     private static Map<String, Integer> DEFAULTS = new HashMap<>();
     private static boolean cachePrimed = false;
 
+    // 客户端未安装 curiosslot 的玩家（其调试手杖被禁用并移除，避免未知物品）
+    private static final Set<UUID> CLIENT_NO_MOD = new HashSet<>();
+    // 已发来 hello 包、确认客户端装了 mod 的玩家
+    private static final Set<UUID> CLIENT_HAS_MOD = new HashSet<>();
+    // 登录后等待 hello 包到达的玩家 -> 登录 tick（超过 100 tick 仍未收到则视为未装）
+    private static final Map<UUID, Integer> LOGIN_PENDING = new HashMap<>();
+
     private static void loadState(MinecraftServer server) {
         TOUCHED = new HashSet<>();
         DEFAULTS = new HashMap<>();
@@ -170,14 +188,14 @@ public class CuriosSlotMod {
     }
 
     // 留痕（单个实体）：记录这一只生物 (UUID,槽位) 已被 set/add 手动修改，之后不再强制默认数量。
-    private static void markTouched(MinecraftServer server, LivingEntity le, String slot) {
+    public static void markTouched(MinecraftServer server, LivingEntity le, String slot) {
         if (!cachePrimed) refreshCaches(server);
         TOUCHED.add(keyOfEntity(le, slot));
         saveState(server);
     }
 
     // 记录/更新某 (实体类型, 槽位) 的默认栏位数量。
-    private static void setDefault(MinecraftServer server, EntityType<?> type, String slot, int count) {
+    public static void setDefault(MinecraftServer server, EntityType<?> type, String slot, int count) {
         if (!cachePrimed) refreshCaches(server);
         DEFAULTS.put(keyOf(type, slot), count);
         saveState(server);
@@ -187,6 +205,21 @@ public class CuriosSlotMod {
     private static int defaultCount(EntityType<?> type, String slot) {
         Integer d = DEFAULTS.get(keyOf(type, slot));
         return d == null ? 1 : d;
+    }
+
+    /** 目标实体所有已有栏位对应的"该实体类型默认数量"，供调试界面显示。 */
+    public static Map<String, Integer> collectDefaults(LivingEntity living) {
+        Map<String, Integer> defs = new LinkedHashMap<>();
+        var inv = CuriosApi.getCuriosInventory(living);
+        if (inv.isPresent()) {
+            ICuriosItemHandler h = inv.resolve().orElse(null);
+            if (h != null) {
+                for (String s : h.getCurios().keySet()) {
+                    defs.put(s, defaultCount(living.getType(), s));
+                }
+            }
+        }
+        return defs;
     }
 
     // 扫描自己写的数据包 entities 文件，得到 实体类型 -> 槽位集合（"已注册"的权威来源）。
@@ -251,10 +284,29 @@ public class CuriosSlotMod {
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
+
+        // 登录延迟判定：客户端 hello 包应在登录后 100 tick 内到达，未到则视为未装 mod，
+        // 记录为未装客户端（open 调试界面时会提示需要客户端安装）
+        if (!LOGIN_PENDING.isEmpty()) {
+            int now = event.getServer().getTickCount();
+            var it = LOGIN_PENDING.entrySet().iterator();
+            while (it.hasNext()) {
+                var e = it.next();
+                if (now - e.getValue() >= 100) {
+                    UUID uuid = e.getKey();
+                    it.remove();
+                    if (!CLIENT_HAS_MOD.contains(uuid)) {
+                        CLIENT_NO_MOD.add(uuid);
+                    }
+                }
+            }
+        }
+
+        MinecraftServer server = event.getServer();
+
         int interval = SWEEP_INTERVAL_SECONDS.get() * 20; // 秒 -> tick
         if (interval <= 0) return; // 设为 0 表示关闭兜底扫描
         if (++sweepTicks % interval != 0) return;
-        MinecraftServer server = event.getServer();
         if (!cachePrimed) refreshCaches(server);
         if (REGISTERED.isEmpty()) return;
         for (Map.Entry<EntityType<?>, Set<String>> entry : REGISTERED.entrySet()) {
@@ -286,9 +338,117 @@ public class CuriosSlotMod {
         }
     }
 
-    public CuriosSlotMod() {
+    public CuriosSlotMod(FMLJavaModLoadingContext context) {
+        IEventBus modEventBus = context.getModEventBus();
+        CuriosSlotNetworking.register();
         MinecraftForge.EVENT_BUS.register(this);
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, CONFIG_SPEC);
+    }
+
+    /**
+     * 把某槽位写入世界数据包 {@code curios/entities} 映射（对目标的整个生物类型生效），
+     * 记录默认数量，并按配置触发数据重载。供调试界面（{@code DebugActionPacket}）调用。
+     *
+     * @return 是否触发了数据重载（受配置 autoReload 控制）。
+     */
+    public static boolean applyCreateSlot(ServerLevel level, EntityType<?> type, String slot, int count) throws Exception {
+        MinecraftServer server = level.getServer();
+        Path packRoot = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot");
+        Path dir = packRoot.resolve("data/curiosslot/curios/entities");
+        Files.createDirectories(dir);
+
+        // 数据包根目录必须有 pack.mcmeta，否则不会被 Minecraft 识别为数据包。
+        Path mcmeta = packRoot.resolve("pack.mcmeta");
+        if (!Files.exists(mcmeta)) {
+            Files.write(mcmeta,
+                    ("{\"pack\":{\"pack_format\":15,\"description\":\"curiosslot dynamic datapack\"}}")
+                            .getBytes(StandardCharsets.UTF_8));
+        }
+
+        String typeId = EntityType.getKey(type).toString();
+        String safe = typeId.replace(':', '_');
+        Path file = dir.resolve(safe + ".json");
+
+        Gson gson = new Gson();
+        JsonObject root;
+        Set<String> slots = new LinkedHashSet<>();
+        if (Files.exists(file)) {
+            root = gson.fromJson(new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8),
+                    JsonObject.class);
+            if (root == null || !root.has("slots") || !root.get("slots").isJsonArray()) {
+                root = new JsonObject();
+            } else {
+                for (JsonElement e : root.getAsJsonArray("slots")) {
+                    slots.add(e.getAsString());
+                }
+            }
+        } else {
+            root = new JsonObject();
+        }
+
+        slots.add(slot);
+        JsonArray arr = new JsonArray();
+        for (String s : slots) {
+            arr.add(s);
+        }
+        root.add("entities", gson.toJsonTree(List.of(typeId)));
+        root.add("slots", arr);
+        Files.write(file, gson.toJson(root).getBytes(StandardCharsets.UTF_8));
+
+        boolean reloaded = false;
+        if (autoReload()) {
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+            reloaded = true;
+        }
+        setDefault(server, type, slot, count);
+        refreshCaches(server);
+        return reloaded;
+    }
+
+    /** 收集某实体当前已有的栏位及数量（槽位名 -> 数量）。 */
+    private static Map<String, Integer> collectExisting(LivingEntity living) {
+        Map<String, Integer> map = new LinkedHashMap<>();
+        var inv = CuriosApi.getCuriosInventory(living);
+        if (inv.isPresent()) {
+            ICuriosItemHandler handler = inv.resolve().orElse(null);
+            if (handler != null) {
+                for (Map.Entry<String, ICurioStacksHandler> e : handler.getCurios().entrySet()) {
+                    map.put(e.getKey(), e.getValue().getSlots());
+                }
+            }
+        }
+        return map;
+    }
+
+    /** 收集该实体可新建的已注册槽位（全部已注册槽位，排除它已有的）。 */
+    private static List<String> collectCreatable(LivingEntity living) {
+        Map<String, Integer> existing = collectExisting(living);
+        List<String> creatable = new ArrayList<>();
+        for (String s : CuriosApi.getSlotHelper().getSlotTypeIds()) {
+            if (!existing.containsKey(s)) {
+                creatable.add(s);
+            }
+        }
+        return creatable;
+    }
+
+    @SubscribeEvent
+    public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer sp && !sp.level().isClientSide()) {
+            // 单机（集成服务器）：客户端与服务端同进程，mod 必然已装，直接视为已装，跳过延迟判定
+            if (!sp.server.isDedicatedServer()) {
+                CLIENT_HAS_MOD.add(sp.getUUID());
+                return;
+            }
+            // 专用服务器：记录登录 tick，稍后在服务端 tick 中延迟判定客户端是否装了 mod（等 hello 包到达）
+            LOGIN_PENDING.put(sp.getUUID(), sp.server.getTickCount());
+        }
+    }
+
+    /** 客户端发来 hello 包后调用：标记该客户端已安装 curiosslot。 */
+    public static void markClientHasMod(UUID uuid) {
+        CLIENT_HAS_MOD.add(uuid);
+        LOGIN_PENDING.remove(uuid);
     }
 
     @SubscribeEvent
@@ -300,12 +460,16 @@ public class CuriosSlotMod {
                                 .then(Commands.argument("slot", StringArgumentType.word())
                                         .then(Commands.argument("count", IntegerArgumentType.integer())
                                                 .then(Commands.argument("target", EntityArgument.entity())
-                                                        .executes(ctx -> run(ctx, "set"))))))
+                                                        .executes(ctx -> run(ctx, "set", false)))
+                                                .then(Commands.literal("nearest")
+                                                        .executes(ctx -> run(ctx, "set", true))))))
                         .then(Commands.literal("add")
                                 .then(Commands.argument("slot", StringArgumentType.word())
                                         .then(Commands.argument("count", IntegerArgumentType.integer())
                                                 .then(Commands.argument("target", EntityArgument.entity())
-                                                        .executes(ctx -> run(ctx, "add"))))))
+                                                        .executes(ctx -> run(ctx, "add", false)))
+                                                .then(Commands.literal("nearest")
+                                                        .executes(ctx -> run(ctx, "add", true))))))
                         .then(Commands.literal("register")
                                 .then(Commands.argument("slot", StringArgumentType.word())
                                         .then(Commands.argument("type", StringArgumentType.string())
@@ -315,11 +479,89 @@ public class CuriosSlotMod {
                                                                 IntegerArgumentType.getInteger(ctx, "count")))))
                                         .then(Commands.literal("from")
                                                 .then(Commands.argument("target", EntityArgument.entity())
-                                                        .executes(ctx -> registerSlot(ctx, 1))
+                                                        .executes(ctx -> registerSlot(ctx, 1, false))
                                                         .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
                                                                 .executes(ctx -> registerSlot(ctx,
-                                                                        IntegerArgumentType.getInteger(ctx, "count"))))))))
+                                                                        IntegerArgumentType.getInteger(ctx, "count"), false))))
+                                                .then(Commands.literal("nearest")
+                                                        .executes(ctx -> registerSlot(ctx, 1, true))
+                                                        .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
+                                                                .executes(ctx -> registerSlot(ctx,
+                                                                        IntegerArgumentType.getInteger(ctx, "count"), true)))))))
+                        .then(Commands.literal("open")
+                                .then(Commands.argument("target", EntityArgument.entity())
+                                        .executes(ctx -> open(ctx, false)))
+                                .then(Commands.literal("nearest")
+                                        .executes(ctx -> open(ctx, true))))
         );
+    }
+
+    /** 最近的一个非玩家实体（只在执行者所处的维度内查找，按到执行者的距离）。无则返回 null。 */
+    private static LivingEntity nearestNonPlayer(CommandSourceStack src) {
+        var pos = src.getPosition();
+        LivingEntity best = null;
+        double bestD = Double.MAX_VALUE;
+        for (Entity e : src.getLevel().getEntities().getAll()) {
+            if (!(e instanceof LivingEntity le)) continue;
+            if (le instanceof net.minecraft.world.entity.player.Player) continue;
+            double d = le.distanceToSqr(pos);
+            if (d < bestD) {
+                bestD = d;
+                best = le;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * /curiosslot open <目标实体|nearest>
+     * <p>
+     * 为操作者打开目标实体的调试界面（纯客户端 GUI，由数据包驱动）。
+     * 若操作者是专用服务器上未安装 curiosslot 的客户端，则无法显示 GUI，仅给出提示。
+     */
+    private int open(CommandContext<CommandSourceStack> ctx, boolean useNearest) {
+        CommandSourceStack src = ctx.getSource();
+        try {
+            LivingEntity living;
+            if (useNearest) {
+                living = nearestNonPlayer(src);
+                if (living == null) {
+                    src.sendFailure(Component.literal("没有找到任何非玩家实体。"));
+                    return 0;
+                }
+            } else {
+                Entity target = EntityArgument.getEntity(ctx, "target");
+                if (!(target instanceof LivingEntity le)) {
+                    src.sendFailure(Component.literal("目标不是 LivingEntity，无法打开调试界面。"));
+                    return 0;
+                }
+                living = le;
+            }
+
+            if (!(src.getEntity() instanceof ServerPlayer sp)) {
+                src.sendFailure(Component.literal("只有玩家能打开调试界面。"));
+                return 0;
+            }
+            if (CLIENT_NO_MOD.contains(sp.getUUID())) {
+                sp.sendSystemMessage(Component.literal(
+                        "[curiosslot] 调试界面需要客户端也安装 curiosslot 才能打开。"));
+                return 1;
+            }
+
+            UUID uuid = living.getUUID();
+            String name = living.getName().getString();
+            Map<String, Integer> existing = collectExisting(living);
+            Map<String, Integer> defaults = collectDefaults(living);
+            List<String> creatable = collectCreatable(living);
+            CuriosSlotNetworking.CHANNEL.send(
+                    PacketDistributor.PLAYER.with(() -> sp),
+                    new DebugOpenPacket(uuid, name, existing, defaults, creatable));
+            src.sendSuccess(() -> Component.literal("已打开 " + name + " 的调试界面。"), true);
+            return 1;
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] open 出错: " + e.getMessage()));
+            return 0;
+        }
     }
 
     /**
@@ -328,15 +570,24 @@ public class CuriosSlotMod {
      * 取目标的生物类型，把该槽位写入世界数据包 {@code curios/entities} 映射，
      * 使<strong>该类型的所有生物</strong>都拥有该饰品栏位，随后触发数据重载。
      */
-    private int registerSlot(CommandContext<CommandSourceStack> ctx, int count) {
+    private int registerSlot(CommandContext<CommandSourceStack> ctx, int count, boolean useNearest) {
         CommandSourceStack src = ctx.getSource();
         try {
             String slot = StringArgumentType.getString(ctx, "slot");
-            Entity target = EntityArgument.getEntity(ctx, "target");
-
-            if (!(target instanceof LivingEntity living)) {
-                src.sendFailure(Component.literal("目标不是 LivingEntity，无法注册槽位。"));
-                return 0;
+            LivingEntity living;
+            if (useNearest) {
+                living = nearestNonPlayer(src);
+                if (living == null) {
+                    src.sendFailure(Component.literal("没有找到任何非玩家实体。"));
+                    return 0;
+                }
+            } else {
+                Entity target = EntityArgument.getEntity(ctx, "target");
+                if (!(target instanceof LivingEntity le)) {
+                    src.sendFailure(Component.literal("目标不是 LivingEntity，无法注册槽位。"));
+                    return 0;
+                }
+                living = le;
             }
 
             String typeId = EntityType.getKey(living.getType()).toString(); // 如 minecraft:cow
@@ -390,6 +641,7 @@ public class CuriosSlotMod {
             // 就无需再创建，避免冗余写入；但若指定了数量，仍会更新该 (类型,槽位) 的默认数量。
             EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(ResourceLocation.tryParse(typeId));
             if (type != null && CuriosApi.getEntitySlots(type).containsKey(slot)) {
+                // 仅更新默认数量，不触发 /reload（实测 reload 无法让已生成的无栏位生物获得栏位）
                 setDefault(src.getServer(), type, slot, count);
                 src.sendSuccess(
                         () -> Component.literal("该实体类型 " + typeId + " 已拥有 " + slot
@@ -460,7 +712,8 @@ public class CuriosSlotMod {
             src.sendSuccess(
                     () -> Component.literal("已为实体类型 " + typeId + " 注册槽位 " + slot
                             + "（默认数量 " + count + "），将对该类型所有生物生效。" + note
-                            + " 该类型当前槽位: " + slots),
+                            + " 该类型当前槽位: " + slots
+                            + " 注意：已生成且没有该饰品栏位的生物，需重新进入存档后才会加载该栏位。"),
                     true);
             return 1;
         } catch (Exception e) {
@@ -469,16 +722,26 @@ public class CuriosSlotMod {
         }
     }
 
-    private int run(CommandContext<CommandSourceStack> ctx, String mode) {
+    private int run(CommandContext<CommandSourceStack> ctx, String mode, boolean useNearest) {
         CommandSourceStack src = ctx.getSource();
         try {
             String slot = StringArgumentType.getString(ctx, "slot");
             int count = IntegerArgumentType.getInteger(ctx, "count");
-            Entity target = EntityArgument.getEntity(ctx, "target");
 
-            if (!(target instanceof LivingEntity living)) {
-                src.sendFailure(Component.literal("目标不是 LivingEntity，无法添加 Curios 栏位。"));
-                return 0;
+            LivingEntity living;
+            if (useNearest) {
+                living = nearestNonPlayer(src);
+                if (living == null) {
+                    src.sendFailure(Component.literal("没有找到任何非玩家实体。"));
+                    return 0;
+                }
+            } else {
+                Entity target = EntityArgument.getEntity(ctx, "target");
+                if (!(target instanceof LivingEntity le)) {
+                    src.sendFailure(Component.literal("目标不是 LivingEntity，无法添加 Curios 栏位。"));
+                    return 0;
+                }
+                living = le;
             }
 
             ISlotHelper slotHelper = CuriosApi.getSlotHelper();
@@ -519,7 +782,7 @@ public class CuriosSlotMod {
 
             src.sendSuccess(
                     () -> Component.literal(("set".equals(mode) ? "已设置 " : "已增加 ")
-                            + slot + " x " + count + " → " + target.getName().getString()),
+                            + slot + " x " + count + " → " + living.getName().getString()),
                     true);
             return 1;
         } catch (Exception e) {

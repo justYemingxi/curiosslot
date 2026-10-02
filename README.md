@@ -19,19 +19,22 @@
 
 ## 安装
 
-1. 把 `curiosslot-1.1.0.jar` 放进 `mods` 文件夹；
+1. 把 `curiosslot-1.2.0.jar` 放进 `mods` 文件夹；
 2. 启动游戏（需要 Curios API 已在 mods 中）；
 3. 进世界后使用下方指令。
+
+> **客户端可选**：本模组**服务端为主、客户端可选**。未安装本模组的客户端也能正常连接并执行指令；但 `/curiosslot open` 的调试界面需要客户端也安装本模组才能打开（未装时会收到提示）。
 
 ## 指令用法
 
 需要 OP / 开启作弊（权限等级 2）。
 
 ```
-/curiosslot set <槽位类型> <数量> <目标实体>
-/curiosslot add <槽位类型> <数量> <目标实体>
+/curiosslot set <槽位类型> <数量> <目标|nearest>
+/curiosslot add <槽位类型> <数量> <目标|nearest>
 /curiosslot register <槽位类型> <实体类型ID> [数量]
-/curiosslot register <槽位类型> from <目标实体> [数量]
+/curiosslot register <槽位类型> from <目标|nearest> [数量]
+/curiosslot open <目标|nearest>
 ```
 
 | 子命令 | 说明 |
@@ -39,6 +42,9 @@
 | `set` | 把目标实体的指定槽位数量**设置**为给定值 |
 | `add` | 在现有基础上**增加**指定数量的栏位 |
 | `register` | 为目标的**整个生物类型**创建该槽位（对同类所有生物生效），并可设置该类型的**默认栏位数量** |
+| `open` | 为**目标实体**打开 Curios 栏位**调试界面**（GUI），可查看/修改本实体栏位数量、设置类型默认数量、创建新槽位 |
+
+> **`<目标>`** 可用原版实体选择器（如 `@e[type=...]`）；也可用快捷词 **`nearest`**，代表"**当前维度内距离最近的（非玩家）实体**"。
 
 > **set / add** 只能调整实体**已有**的栏位（玩家、车万女仆、以及已通过数据包配置了栏位的生物）。
 > 若目标没有该槽位，会明确提示并列出它实际有哪些栏位。
@@ -74,6 +80,17 @@
 ```
 /curiosslot register ring minecraft:cow 3
 ```
+
+### 调试界面（`open`）
+
+`/curiosslot open <目标|nearest>` 会为目标实体打开一个**调试 GUI**，可直接可视化操作，不需要记指令参数：
+
+- 每行一个已有栏位：**左列**设置**本实体**的栏位数量（输入框 + `设置` / `-` / `+`），**右列**设置**该实体类型的默认栏位数量**（输入框 + `默认`）；
+- 底部「＋ 创建栏位」可为该生物类型创建新槽位（下拉列出可新建槽位，并设置默认数量）；
+- 操作实时生效，界面自动刷新。
+
+> 调试界面是纯客户端 GUI，**需要客户端也安装本模组**才能打开；未装时服务端只会给出提示。
+> 设置"类型默认数量"后，**已生成的**该类型生物需 `/reload` 或重新进入存档后按新默认值重置。
 
 ### 槽位类型
 
@@ -112,7 +129,7 @@ necklace / ring / feet / scroll / spellbook / accessory
 gradlew build
 ```
 
-产物位于 `build/libs/curiosslot-1.1.0.jar`。
+产物位于 `build/libs/curiosslot-1.2.0.jar`。
 
 > 注意：本仓库**不含** `libs/`（Curios 的 jar 不在此公开分发，避免分发他人模组）。编译依赖为 `compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))`，如需从源码构建，请自行把对应版本的 Curios jar 放入 `libs/` 目录后执行 `gradlew build`。已编译好的 jar 可直接使用，无需自己构建。
 

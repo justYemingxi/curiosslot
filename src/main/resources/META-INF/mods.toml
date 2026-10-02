@@ -4,13 +4,17 @@ license="MIT"
 
 [[mods]]
 modId="curiosslot"
-version="1.1.0"
+version="1.2.0"
 displayName="Curios Slot"
 authors="justYemingxi"
+displayTest="IGNORE_ALL_VERSION"
 description='''
 局内为生物实体添加/设置 Curios 饰品栏位的独立模组。
-提供 /curiosslot set|add <槽位> <数量> <目标> 为已有栏位调整数量；
-/curiosslot register <槽位> <目标> 为整个生物类型创建新饰品栏位。
+提供 /curiosslot set|add <槽位> <数量> <目标|nearest> 为已有栏位调整数量；
+/curiosslot register <槽位> from <目标|nearest> [数量] 为整个生物类型创建新饰品栏位；
+/curiosslot open <目标|nearest> 打开目标生物的栏位调试界面。
+目标可用原版实体选择器，或用快捷词 nearest（最近的非玩家实体）。
+客户端可选安装：未安装时仅服务端指令可用，调试界面需要客户端也安装才能打开。
 依赖 Curios API。
 '''
 
