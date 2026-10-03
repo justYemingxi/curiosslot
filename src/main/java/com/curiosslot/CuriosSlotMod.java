@@ -6,7 +6,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.curiosslot.network.CuriosSlotNetworking;
+import com.curiosslot.network.EnablePackPacket;
+import com.curiosslot.network.SlotIconListPacket;
+import com.curiosslot.network.RegisteredSlotListPacket;
 import com.curiosslot.network.DebugOpenPacket;
+import com.curiosslot.network.SyncResourcePackPacket;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -14,20 +18,32 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
+import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.repository.PackRepository;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
+import net.minecraftforge.event.entity.player.ItemTooltipEvent;
+import java.nio.file.StandardCopyOption;
+import net.minecraft.server.dedicated.DedicatedServer;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
@@ -41,6 +57,8 @@ import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
 import top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler;
 import top.theillusivec4.curios.api.type.util.ISlotHelper;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -52,6 +70,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -134,13 +153,6 @@ public class CuriosSlotMod {
     private static Map<String, Integer> DEFAULTS = new HashMap<>();
     private static boolean cachePrimed = false;
 
-    // 客户端未安装 curiosslot 的玩家（其调试手杖被禁用并移除，避免未知物品）
-    private static final Set<UUID> CLIENT_NO_MOD = new HashSet<>();
-    // 已发来 hello 包、确认客户端装了 mod 的玩家
-    private static final Set<UUID> CLIENT_HAS_MOD = new HashSet<>();
-    // 登录后等待 hello 包到达的玩家 -> 登录 tick（超过 100 tick 仍未收到则视为未装）
-    private static final Map<UUID, Integer> LOGIN_PENDING = new HashMap<>();
-
     private static void loadState(MinecraftServer server) {
         TOUCHED = new HashSet<>();
         DEFAULTS = new HashMap<>();
@@ -183,7 +195,18 @@ public class CuriosSlotMod {
 
     private static void refreshCaches(MinecraftServer server) {
         REGISTERED = scanRegistered(server);
-        loadState(server);
+        loadState(server); // 刷新 TOUCHED / DEFAULTS
+        // 补充：凡是设过默认数量的 (类型,槽位)——即使该类型原本已拥有此槽位（register 只更新默认、未写数据包），
+        // 也纳入扫描清单，让生成钩子与兜底扫描能对其重载默认数量。
+        for (String key : DEFAULTS.keySet()) {
+            int idx = key.lastIndexOf('#');
+            if (idx <= 0 || idx >= key.length() - 1) continue;
+            EntityType<?> type = ForgeRegistries.ENTITY_TYPES
+                    .getValue(ResourceLocation.tryParse(key.substring(0, idx)));
+            if (type != null) {
+                REGISTERED.computeIfAbsent(type, k -> new HashSet<>()).add(key.substring(idx + 1));
+            }
+        }
         cachePrimed = true;
     }
 
@@ -194,6 +217,72 @@ public class CuriosSlotMod {
         saveState(server);
     }
 
+    // 全局重置：清除所有留痕（UUID 白名单），所有被 set/add 改过的生物都不再受保护，
+    // 并立即把已加载实体的栏位重置为类型默认 size（不再依赖周期兜底扫描，清除后即时生效）。
+    public static void clearAllTouched(MinecraftServer server) {
+        if (!cachePrimed) refreshCaches(server);
+        TOUCHED.clear();
+        saveState(server);
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                if (e instanceof LivingEntity le) {
+                    resetEntitySlotsToDefault(le);
+                }
+            }
+        }
+    }
+
+    // 清空当前存档所有 curiosslot 数据包（entities 映射 + 状态文件 + pack.mcmeta），回归原始数据。
+    // 删除后清空内存缓存，并按 autoReload 触发重载让 Curios 不再认这些映射。
+    public static void clearAllConfig(MinecraftServer server) {
+        Path packRoot = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot");
+        try {
+            if (Files.exists(packRoot)) {
+                try (java.util.stream.Stream<Path> stream = Files.walk(packRoot)) {
+                    stream.sorted(java.util.Comparator.reverseOrder())
+                            .forEach(p -> {
+                                try {
+                                    Files.deleteIfExists(p);
+                                } catch (Exception ignored) {
+                                }
+                            });
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        // 清空内存缓存，回归原始（无任何 mod 设定）
+        REGISTERED = new HashMap<>();
+        TOUCHED = new HashSet<>();
+        DEFAULTS = new HashMap<>();
+        cachePrimed = true;
+        // 重置所有已加载实体的 Curios 槽位为槽位类型默认 size（回归原始，清除 setSlotsForType 的持久化遗留）
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                if (e instanceof LivingEntity le) {
+                    resetEntitySlotsToDefault(le);
+                }
+            }
+        }
+        if (autoReload()) {
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+        }
+    }
+
+    // 把单个实体的所有 Curios 槽位重置为槽位类型默认 size（清除 setSlotsForType 的持久化遗留，回归原始）。
+    public static void resetEntitySlotsToDefault(LivingEntity le) {
+        var inv = CuriosApi.getCuriosInventory(le);
+        if (!inv.isPresent()) return;
+        ICuriosItemHandler handler = inv.resolve().orElse(null);
+        if (handler == null) return;
+        for (Map.Entry<String, ICurioStacksHandler> en : handler.getCurios().entrySet()) {
+            int def = CuriosApi.getSlot(en.getKey())
+                    .map(top.theillusivec4.curios.api.type.ISlotType::getSize).orElse(1);
+            if (en.getValue().getSlots() != def) {
+                CuriosApi.getSlotHelper().setSlotsForType(en.getKey(), le, def);
+            }
+        }
+    }
+
     // 记录/更新某 (实体类型, 槽位) 的默认栏位数量。
     public static void setDefault(MinecraftServer server, EntityType<?> type, String slot, int count) {
         if (!cachePrimed) refreshCaches(server);
@@ -201,10 +290,14 @@ public class CuriosSlotMod {
         saveState(server);
     }
 
-    // 该 (实体类型, 槽位) 的默认数量（未设置时为 1）。
+    // 该 (实体类型, 槽位) 的默认数量。
+    // 未 register 覆盖时回退到 Curios 配置的真实默认（有的槽位默认不止 1，玩家也可能改过 config，不硬编码 1）。
     private static int defaultCount(EntityType<?> type, String slot) {
         Integer d = DEFAULTS.get(keyOf(type, slot));
-        return d == null ? 1 : d;
+        if (d != null) return d;
+        return CuriosApi.getSlot(slot)
+                .map(top.theillusivec4.curios.api.type.ISlotType::getSize)
+                .orElse(1);
     }
 
     /** 目标实体所有已有栏位对应的"该实体类型默认数量"，供调试界面显示。 */
@@ -248,6 +341,26 @@ public class CuriosSlotMod {
         return map;
     }
 
+    // ========== 服务端启动完成：强制用当前(新)存档的数据重建缓存 ==========
+    // static 缓存（REGISTERED/DEFAULTS/TOUCHED）跨存档不清空，单机切档/重进时服务端重启但 static 保留旧值，
+    // 必须在每个新服务端启动时刷新，否则会沿用上一个存档的默认栏位设定。
+    @SubscribeEvent
+    public void onServerStarted(ServerStartedEvent event) {
+        MinecraftServer server = event.getServer();
+        // 确保图标输入文件夹存在（游戏根目录 curiosslot_slots/icons/），方便玩家放入栏位图标
+        try {
+            Files.createDirectories(server.getServerDirectory().toPath()
+                    .resolve("curiosslot_slots").resolve("icons"));
+        } catch (Exception ignored) {
+        }
+        // 把全局数据包仓库复制到当前世界（新存档/重进自动带上已注册的全局栏位）
+        try {
+            syncGlobalToWorld(server);
+        } catch (Exception ignored) {
+        }
+        refreshCaches(server);
+    }
+
     // ========== 生成时挂钩（主机制）：实体一进世界，就把"已注册且未留痕"的槽位数量设为默认值 ==========
     // 这样新实体生成时直接就是默认数量（通常 1），扫描轮次几乎永远不需要重设，避免大批量重设卡顿。
     @SubscribeEvent
@@ -259,7 +372,14 @@ public class CuriosSlotMod {
         if (!cachePrimed) refreshCaches(server);
         EntityType<?> type = le.getType();
         Set<String> slots = REGISTERED.get(type);
-        if (slots == null || slots.isEmpty()) return;
+        if (slots == null || slots.isEmpty()) {
+            // 全局 REGISTERED 为空 = 已清空配置 / 从未注册：把该实体（含离线玩家遗留的持久化槽位数量）
+            // 全部重置为 Curios 槽位类型默认 size，回归原始。
+            if (REGISTERED.isEmpty()) {
+                resetEntitySlotsToDefault(le);
+            }
+            return;
+        }
         ISlotHelper slotHelper = CuriosApi.getSlotHelper();
         for (String slot : slots) {
             if (TOUCHED.contains(keyOfEntity(le, slot))) continue; // 该个体已留痕，尊重手动设置
@@ -284,23 +404,6 @@ public class CuriosSlotMod {
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
-
-        // 登录延迟判定：客户端 hello 包应在登录后 100 tick 内到达，未到则视为未装 mod，
-        // 记录为未装客户端（open 调试界面时会提示需要客户端安装）
-        if (!LOGIN_PENDING.isEmpty()) {
-            int now = event.getServer().getTickCount();
-            var it = LOGIN_PENDING.entrySet().iterator();
-            while (it.hasNext()) {
-                var e = it.next();
-                if (now - e.getValue() >= 100) {
-                    UUID uuid = e.getKey();
-                    it.remove();
-                    if (!CLIENT_HAS_MOD.contains(uuid)) {
-                        CLIENT_NO_MOD.add(uuid);
-                    }
-                }
-            }
-        }
 
         MinecraftServer server = event.getServer();
 
@@ -342,7 +445,114 @@ public class CuriosSlotMod {
         IEventBus modEventBus = context.getModEventBus();
         CuriosSlotNetworking.register();
         MinecraftForge.EVENT_BUS.register(this);
+        MinecraftForge.EVENT_BUS.register(ClientPackEvents.class);
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, CONFIG_SPEC);
+    }
+
+    /** 向单个客户端下发当前生成的 curiosslot_slots 资源包（服务端已有 zip 时），供其写盘加载。 */
+    public static void sendResourcePackToClient(ServerPlayer sp) {
+        try {
+            Path zip = sp.server.getServerDirectory().toPath()
+                    .resolve("resourcepacks").resolve("curiosslot_slots.zip");
+            if (!Files.exists(zip)) return;
+            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+                    new SyncResourcePackPacket(Files.readAllBytes(zip)));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 把当前生成的 curiosslot_slots 资源包广播给所有在线玩家（专用服务器/单机联机均可）。 */
+    public static void broadcastResourcePack(MinecraftServer server) {
+        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
+            sendResourcePackToClient(p);
+        }
+    }
+
+    /** 登录时把已生成的资源包同步给该客户端，保证后加入的玩家也能正常显示图标与中文名。 */
+    @SubscribeEvent
+    public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof ServerPlayer sp && !sp.level().isClientSide()) {
+            sendResourcePackToClient(sp);
+        }
+    }
+
+    /** 客户端启用生成的 curiosslot_slots 资源包（槽位图标 + 中文名）。可被 EnablePackPacket 与进世界兜底调用。 */
+    public static void enableCustomPack() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null) return;
+            PackRepository repo = mc.getResourcePackRepository();
+            if (repo == null) return;
+            repo.reload();
+            String fileId = "file/curiosslot_slots.zip";
+            // 实际 pack id 可能带或不带 .zip 后缀，用包含匹配以兼容两种
+            var packOpt = repo.getAvailablePacks().stream()
+                    .filter(p -> p.getId().contains("curiosslot_slots")).findFirst();
+            if (packOpt.isPresent()) {
+                String pid = packOpt.get().getId();
+                if (!repo.getSelectedIds().contains(pid)) {
+                    Set<String> sel = new HashSet<>(repo.getSelectedIds());
+                    sel.add(pid);
+                    repo.setSelected(sel);
+                    // 持久化用 Minecraft 标准的 file/ 前缀格式，下次启动才会自动加载
+                    if (!mc.options.resourcePacks.contains(fileId)) {
+                        mc.options.resourcePacks.add(fileId);
+                        mc.options.save();
+                    }
+                    mc.reloadResourcePacks();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 客户端进世界时兜底启用 curiosslot_slots 资源包，保证重启/重进存档后图标与中文名必然生效。 */
+    public static final class ClientPackEvents {
+        @net.minecraftforge.eventbus.api.SubscribeEvent
+        public static void onClientJoin(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingIn ev) {
+            enableCustomPack();
+        }
+    }
+
+    /** 单机 registerslot 时，把 curiosslot_slots 持久化进 options.txt 的 resourcePacks 列表，使下次启动自动加载。
+     *  注意必须用 Minecraft 标准的 file/ 前缀格式（file/curiosslot_slots.zip），裸 id 启动时不会被正确匹配。 */
+    private static void addToOptionsTxt(Path options) {
+        try {
+            if (!Files.exists(options)) return;
+            List<String> lines = Files.readAllLines(options, StandardCharsets.UTF_8);
+            boolean changed = false;
+            Gson g = new Gson();
+            String fileId = "file/curiosslot_slots.zip";
+            for (int i = 0; i < lines.size(); i++) {
+                String ln = lines.get(i);
+                if (ln.startsWith("resourcePacks:")) {
+                    String arr = ln.substring("resourcePacks:".length());
+                    JsonArray ja = null;
+                    try {
+                        ja = g.fromJson(arr, JsonArray.class);
+                    } catch (Exception ignored) {
+                    }
+                    if (ja == null) ja = new JsonArray();
+                    boolean has = false;
+                    for (JsonElement e : ja) {
+                        if (e.isJsonPrimitive() && e.getAsString().contains("curiosslot_slots")) {
+                            has = true;
+                            break;
+                        }
+                    }
+                    if (!has) {
+                        ja.add(fileId);
+                        lines.set(i, "resourcePacks:" + g.toJson(ja));
+                        changed = true;
+                    }
+                    break;
+                }
+            }
+            if (changed) {
+                Files.write(options, lines, StandardCharsets.UTF_8);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     /**
@@ -433,29 +643,27 @@ public class CuriosSlotMod {
     }
 
     @SubscribeEvent
-    public void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.getEntity() instanceof ServerPlayer sp && !sp.level().isClientSide()) {
-            // 单机（集成服务器）：客户端与服务端同进程，mod 必然已装，直接视为已装，跳过延迟判定
-            if (!sp.server.isDedicatedServer()) {
-                CLIENT_HAS_MOD.add(sp.getUUID());
-                return;
-            }
-            // 专用服务器：记录登录 tick，稍后在服务端 tick 中延迟判定客户端是否装了 mod（等 hello 包到达）
-            LOGIN_PENDING.put(sp.getUUID(), sp.server.getTickCount());
-        }
-    }
-
-    /** 客户端发来 hello 包后调用：标记该客户端已安装 curiosslot。 */
-    public static void markClientHasMod(UUID uuid) {
-        CLIENT_HAS_MOD.add(uuid);
-        LOGIN_PENDING.remove(uuid);
-    }
-
-    @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(
                 Commands.literal("curiosslot")
                         .requires(src -> src.hasPermission(2))
+                        .then(Commands.literal("clear")
+                                .executes(ctx -> {
+                                    clearAllConfig(ctx.getSource().getServer());
+                                    ctx.getSource().sendSuccess(
+                                            () -> Component.literal("已清空当前存档所有 curiosslot 数据包，回归原始数据。"),
+                                            true);
+                                    return 1;
+                                }))
+                        .then(Commands.literal("reset")
+                                .executes(ctx -> {
+                                    clearAllTouched(ctx.getSource().getServer());
+                                    ctx.getSource().sendSuccess(
+                                            () -> Component.literal("已清除所有留痕（UUID 记录），"
+                                                    + "所有被 set/add 改过的生物将被重置回默认数量。"),
+                                            true);
+                                    return 1;
+                                }))
                         .then(Commands.literal("set")
                                 .then(Commands.argument("slot", StringArgumentType.word())
                                         .then(Commands.argument("count", IntegerArgumentType.integer())
@@ -488,6 +696,20 @@ public class CuriosSlotMod {
                                                         .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
                                                                 .executes(ctx -> registerSlot(ctx,
                                                                         IntegerArgumentType.getInteger(ctx, "count"), true)))))))
+                        .then(Commands.literal("registerslot")
+                                .requires(src -> canManageSlots(src))
+                                .then(Commands.argument("id", StringArgumentType.word())
+                                        .executes(ctx -> registerSlotType(ctx.getSource(),
+                                                StringArgumentType.getString(ctx, "id"), null))
+                                        .then(Commands.argument("displayName", StringArgumentType.greedyString())
+                                                .executes(ctx -> registerSlotType(ctx.getSource(),
+                                                        StringArgumentType.getString(ctx, "id"),
+                                                        StringArgumentType.getString(ctx, "displayName"))))))
+                        .then(Commands.literal("unregisterslot")
+                                .requires(src -> canManageSlots(src))
+                                .then(Commands.argument("id", StringArgumentType.word())
+                                        .executes(ctx -> unregisterSlotType(ctx.getSource(),
+                                                StringArgumentType.getString(ctx, "id")))))
                         .then(Commands.literal("open")
                                 .then(Commands.argument("target", EntityArgument.entity())
                                         .executes(ctx -> open(ctx, false)))
@@ -542,12 +764,39 @@ public class CuriosSlotMod {
                 src.sendFailure(Component.literal("只有玩家能打开调试界面。"));
                 return 0;
             }
-            if (CLIENT_NO_MOD.contains(sp.getUUID())) {
-                sp.sendSystemMessage(Component.literal(
-                        "[curiosslot] 调试界面需要客户端也安装 curiosslot 才能打开。"));
-                return 1;
-            }
+            openFor(sp, living);
+            return 1;
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] open 出错: " + e.getMessage()));
+            return 0;
+        }
+    }
 
+    /** 注册/删除全新槽位仅服务端侧可用：
+     *  专用服务器：仅服务端 console（无实体执行者）可执行，联机客户端（即使 4 级管理员）不可用；
+     *  单机集成服务器：仅主机玩家可用。 */
+    private static boolean canManageSlots(CommandSourceStack src) {
+        if (!src.hasPermission(4)) return false;
+        MinecraftServer server = src.getServer();
+        if (server.isDedicatedServer()) {
+            return src.getEntity() == null;
+        }
+        if (src.getEntity() instanceof net.minecraft.world.entity.player.Player p) {
+            return server.isSingleplayerOwner(p.getGameProfile());
+        }
+        return false;
+    }
+
+    private static boolean canManageSlots(ServerPlayer sp) {
+        if (!sp.hasPermissions(4)) return false;
+        MinecraftServer server = sp.server;
+        if (server.isDedicatedServer()) return false;
+        return server.isSingleplayerOwner(sp.getGameProfile());
+    }
+
+    /** 打开某实体的调试界面（open 指令与"饰品配置手杖"右键共用）。 */
+    private static boolean openFor(ServerPlayer sp, LivingEntity living) {
+        try {
             UUID uuid = living.getUUID();
             String name = living.getName().getString();
             Map<String, Integer> existing = collectExisting(living);
@@ -555,13 +804,41 @@ public class CuriosSlotMod {
             List<String> creatable = collectCreatable(living);
             CuriosSlotNetworking.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> sp),
-                    new DebugOpenPacket(uuid, name, existing, defaults, creatable));
-            src.sendSuccess(() -> Component.literal("已打开 " + name + " 的调试界面。"), true);
-            return 1;
+                    new DebugOpenPacket(uuid, name, existing, defaults, creatable, canManageSlots(sp)));
+            // 不再发送"已打开"提示：客户端未安装 curiosslot 时收不到该包，提示会误导（GUI 实际未弹出）
+            return true;
         } catch (Exception e) {
-            src.sendFailure(Component.literal("[curiosslot] open 出错: " + e.getMessage()));
-            return 0;
+            sp.sendSystemMessage(Component.literal("[curiosslot] 打开调试界面出错: " + e.getMessage()));
+            return false;
         }
+    }
+
+    /** 是否为激活的饰品配置手杖：绊线勾且在铁砧重命名为"饰品配置手杖"。 */
+    private static boolean isSlotWand(ItemStack stack) {
+        if (stack.getItem() != Items.TRIPWIRE_HOOK) return false;
+        net.minecraft.network.chat.Component name = stack.getHoverName();
+        return name != null && "饰品配置手杖".equals(name.getString());
+    }
+
+    /**
+     * 手持"饰品配置手杖"（绊线勾重命名）右键实体时，直接打开该实体的调试界面。
+     * 目标就是右键的那个实体（玩家或生物），不取最近、不排除玩家。
+     */
+    @SubscribeEvent
+    public void onWandInteract(PlayerInteractEvent.EntityInteractSpecific event) {
+        if (event.getLevel().isClientSide()) return;
+        if (!(event.getEntity() instanceof ServerPlayer sp)) return;
+        if (!isSlotWand(event.getItemStack())) return;
+        if (!(event.getTarget() instanceof LivingEntity le)) return;
+        event.setCanceled(true); // 取消对实体的原版交互（绊线勾右键实体本无行为）
+        openFor(sp, le);
+    }
+
+    /** 饰品配置手杖的工具提示：提示悬停玩家确认改名正确（客户端显示）。 */
+    @SubscribeEvent
+    public void onItemTooltip(ItemTooltipEvent event) {
+        if (!isSlotWand(event.getItemStack())) return;
+        event.getToolTip().add(Component.literal("§a饰品配置手杖：右键实体（含玩家）打开其饰品配置界面"));
     }
 
     /**
@@ -637,18 +914,9 @@ public class CuriosSlotMod {
                 return 0;
             }
 
-            // 拦截：若该实体类型当前已拥有此槽位（来自 Curios 内置、其他数据包、或本 mod 之前注册），
-            // 就无需再创建，避免冗余写入；但若指定了数量，仍会更新该 (类型,槽位) 的默认数量。
+            // 无论该类型是否原本已拥有此槽位，register 一律写数据包 entities 映射 + 记录默认数量，
+            // 让 Curios 认识该 (类型,槽位)，再叠加默认数量（defaultCount 无覆盖时回退 Curios 全局配置）。
             EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(ResourceLocation.tryParse(typeId));
-            if (type != null && CuriosApi.getEntitySlots(type).containsKey(slot)) {
-                // 仅更新默认数量，不触发 /reload（实测 reload 无法让已生成的无栏位生物获得栏位）
-                setDefault(src.getServer(), type, slot, count);
-                src.sendSuccess(
-                        () -> Component.literal("该实体类型 " + typeId + " 已拥有 " + slot
-                                + " 栏位，无需注册。默认数量已设为 " + count + "。"),
-                        true);
-                return 1;
-            }
 
             var server = src.getServer();
 
@@ -719,6 +987,345 @@ public class CuriosSlotMod {
         } catch (Exception e) {
             src.sendFailure(Component.literal("[curiosslot] register 出错: " + e.getMessage()));
             return 0;
+        }
+    }
+
+    /**
+     * /curiosslot registerslot <id> [中文名]
+     * <p>
+     * 注册一个全新的 Curios 饰品栏位类型：写入数据包 data/curios/curios/slots/<id>.json；
+     * 图标从游戏根目录 curiosslot_slots/icons/<id>.png 读取并作为槽位图标（客户端资源）；
+     * 中文名写入本地化键 curios.identifier.<id>（GUI 显示）。
+     * 单机/集成服务器：datapack 的 assets 自动作为资源加载；专用服务器：额外生成服务器资源包自动下发客户端。
+     */
+    public static int registerSlotType(CommandSourceStack src, String id, String displayName) {
+        MinecraftServer server = src.getServer();
+        if (!id.matches("[a-z0-9_\\-.]{1,64}")) {
+            src.sendFailure(Component.literal("栏位 id 必须为小写字母/数字/下划线/连字符/点，长度 1~64。"));
+            return 0;
+        }
+        Path gameRoot = server.getServerDirectory().toPath();
+        Path iconsDir = gameRoot.resolve("curiosslot_slots").resolve("icons");
+        Path iconSrc = iconsDir.resolve(id + ".png");
+        if (!Files.exists(iconSrc)) {
+            src.sendFailure(Component.literal("未找到图标 " + iconSrc
+                    + "。请先把图标图片（文件名=栏位 id，如 " + id + ".png）放入该文件夹。"));
+            return 0;
+        }
+
+        try {
+            // 全局数据包目录（游戏根/datapacks/curiosslot_slots，已通过 AddPackFindersEvent 注册为全局源，新存档共享）
+            Path packRoot = gameRoot.resolve("datapacks").resolve("curiosslot_slots");
+
+            // 1) 槽位定义 data/curios/curios/slots/<id>.json
+            Path slotDir = packRoot.resolve("data/curios/curios/slots");
+            Files.createDirectories(slotDir);
+            long order;
+            try (var s = Files.list(slotDir)) {
+                order = 3000 + s.filter(p -> p.getFileName().toString().endsWith(".json")).count();
+            }
+            Gson gson = new Gson();
+            JsonObject slotJson = new JsonObject();
+            slotJson.addProperty("size", 1);
+            slotJson.addProperty("order", order);
+            slotJson.addProperty("icon", "curios:slot/empty_" + id + "_slot");
+            Files.write(slotDir.resolve(id + ".json"), gson.toJson(slotJson).getBytes(StandardCharsets.UTF_8));
+
+            // 2) 图标 assets/curios/textures/slot/empty_<id>_slot.png（Curios 约定：curios 命名空间 + empty_ 前缀）
+            Path texDir = packRoot.resolve("assets/curios/textures/slot");
+            Files.createDirectories(texDir);
+            Files.copy(iconSrc, texDir.resolve("empty_" + id + "_slot.png"), StandardCopyOption.REPLACE_EXISTING);
+
+            // 3) 本地化名称 assets/curios/lang/{zh_cn,en_us}.json（合并 Curios 内置，键 curios.identifier.<id>）
+            Path langDir = packRoot.resolve("assets/curios/lang");
+            Files.createDirectories(langDir);
+            String name = (displayName == null || displayName.isEmpty()) ? id : displayName;
+            writeCuriosLang(server, langDir, "zh_cn", id, name);
+            writeCuriosLang(server, langDir, "en_us", id, id);
+
+            // 4) entities 绑定：静态挂到玩家（教程 mcmod/post/4676 做法，否则玩家饰品栏看不到新槽位）。
+            //    其他生物通过 GUI「创建栏位」或 register 指令动态挂载。
+            Path entDir = packRoot.resolve("data/curios/curios/entities");
+            Files.createDirectories(entDir);
+            JsonObject entJson = new JsonObject();
+            entJson.add("conditions", new JsonArray());
+            JsonArray entEntities = new JsonArray();
+            entEntities.add("minecraft:player");
+            entJson.add("entities", entEntities);
+            JsonArray entSlots = new JsonArray();
+            entSlots.add(id);
+            entJson.add("slots", entSlots);
+            Files.write(entDir.resolve("player_" + id + ".json"),
+                    gson.toJson(entJson).getBytes(StandardCharsets.UTF_8));
+
+            // 4) pack.mcmeta
+            Path mcmeta = packRoot.resolve("pack.mcmeta");
+            if (!Files.exists(mcmeta)) {
+                Files.write(mcmeta,
+                        ("{\"pack\":{\"pack_format\":15,\"description\":\"curiosslot custom slots\"}}")
+                                .getBytes(StandardCharsets.UTF_8));
+            }
+
+            // 资源下发：专用服务器生成服务器资源包自动下发；单机/集成服务器生成客户端资源包并通知客户端启用
+            Path packsDir = server.getServerDirectory().toPath().resolve("resourcepacks");
+            Files.createDirectories(packsDir);
+            zipAssets(packRoot, packsDir.resolve("curiosslot_slots.zip"));
+            if (server instanceof DedicatedServer) {
+                server.getPackRepository().reload();
+            } else {
+                // 单机：把资源包写进 options.txt 持久化启用（下次启动自动加载，原版机制最可靠），并即时尝试启用
+                addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
+                if (src.getEntity() instanceof ServerPlayer sp) {
+                    CuriosSlotNetworking.CHANNEL.send(
+                            PacketDistributor.PLAYER.with(() -> sp), new EnablePackPacket());
+                }
+            }
+
+            // 同步到所有世界并 reload，使槽位立即全局生效（含当前世界；新存档由 onServerStarted 兜底）
+            syncGlobalToAllWorlds(server);
+            // 把资源包广播给所有在线客户端，保证多人联机下图标与中文名正常显示
+            broadcastResourcePack(server);
+
+            String label = (displayName == null || displayName.isEmpty()) ? id : displayName;
+            src.sendSuccess(
+                    () -> Component.literal("已注册饰品栏位 " + id + "（" + label + "）。"
+                            + "玩家已默认获得该栏位，其他生物可用 /curiosslot register 添加。"
+                            + "图标使用 " + iconSrc),
+                    true);
+            return 1;
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] registerslot 出错: " + e.getMessage()));
+            return 0;
+        }
+    }
+
+    /** 把全局数据包仓库（游戏根/datapacks/curiosslot_slots）复制到当前世界 datapacks/curiosslot_slots，并 reload 使生效。
+     *  这样新存档/重进都会自动带上已注册的全局栏位，且当前世界立即生效。 */
+    public static void syncGlobalToWorld(MinecraftServer server) throws java.io.IOException {
+        Path global = FMLPaths.GAMEDIR.get().resolve("datapacks").resolve("curiosslot_slots");
+        if (!Files.exists(global.resolve("pack.mcmeta"))) return;
+        Path worldDp = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot_slots");
+        if (Files.exists(worldDp)) deleteRecursive(worldDp);
+        copyRecursive(global, worldDp);
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+    }
+
+    private static void deleteRecursive(Path p) throws java.io.IOException {
+        if (Files.isDirectory(p)) {
+            try (var s = Files.list(p)) {
+                for (Path c : s.toList()) deleteRecursive(c);
+            }
+        }
+        Files.deleteIfExists(p);
+    }
+
+    private static void copyRecursive(Path from, Path to) throws java.io.IOException {
+        Files.createDirectories(to);
+        try (var s = Files.list(from)) {
+            for (Path c : s.toList()) {
+                Path target = to.resolve(from.relativize(c).toString());
+                if (Files.isDirectory(c)) {
+                    copyRecursive(c, target);
+                } else {
+                    Files.createDirectories(target.getParent());
+                    Files.copy(c, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    /** 把全局数据包仓库同步到游戏根 saves 下的所有世界（每个世界 datapacks/curiosslot_slots），
+     *  并 reload 当前世界。这样注册/删除槽位对任意存档都立即生效，其他世界下次进入也已就绪。 */
+    public static void syncGlobalToAllWorlds(MinecraftServer server) throws java.io.IOException {
+        Path global = FMLPaths.GAMEDIR.get().resolve("datapacks").resolve("curiosslot_slots");
+        boolean hasGlobal = Files.exists(global.resolve("pack.mcmeta"));
+        Path saves = FMLPaths.GAMEDIR.get().resolve("saves");
+        if (Files.isDirectory(saves)) {
+            try (var ws = Files.list(saves)) {
+                for (Path w : ws.toList()) {
+                    if (!Files.isDirectory(w)) continue;
+                    Path wDp = w.resolve("datapacks").resolve("curiosslot_slots");
+                    if (Files.exists(wDp)) deleteRecursive(wDp);
+                    if (hasGlobal) copyRecursive(global, wDp);
+                }
+            }
+        }
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+    }
+
+    /** 服务端读取 icons 文件夹内的槽位图标文件名（去 .png 后缀），发给客户端注册界面。 */
+    public static void sendSlotIcons(ServerPlayer sp) {
+        try {
+            Path iconsDir = sp.server.getServerDirectory().toPath()
+                    .resolve("curiosslot_slots").resolve("icons");
+            List<String> ids = new ArrayList<>();
+            if (Files.exists(iconsDir)) {
+                try (var s = Files.list(iconsDir)) {
+                    s.filter(p -> p.getFileName().toString().endsWith(".png"))
+                     .sorted()
+                     .forEach(p -> ids.add(p.getFileName().toString().replaceAll("\\.png$", "")));
+                }
+            }
+            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+                    new SlotIconListPacket(ids));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 客户端注册界面触发的 registerslot：先校验"仅房主/管理员"，再执行注册。 */
+    public static void registerSlotFromClient(ServerPlayer sp, String id, String name) {
+        if (!canManageSlots(sp)) {
+            sp.sendSystemMessage(Component.literal("[curiosslot] 你没有 4 级权限，无法注册饰品栏位。"));
+            return;
+        }
+        registerSlotType(sp.createCommandSourceStack(), id, name);
+    }
+
+    /** 清除一个已注册的 Curios 饰品栏位：删除全局数据包定义/图标/翻译键，并重建资源包。 */
+    public static int unregisterSlotType(CommandSourceStack src, String id) {
+        MinecraftServer server = src.getServer();
+        if (!id.matches("[a-z0-9_\\-.]{1,64}")) {
+            src.sendFailure(Component.literal("栏位 id 必须为小写字母/数字/下划线/连字符/点，长度 1~64。"));
+            return 0;
+        }
+        try {
+            Path gameRoot = server.getServerDirectory().toPath();
+            Path packRoot = gameRoot.resolve("datapacks").resolve("curiosslot_slots");
+            boolean any = false;
+            Path slotFile = packRoot.resolve("data/curios/curios/slots").resolve(id + ".json");
+            if (Files.exists(slotFile)) {
+                Files.delete(slotFile);
+                any = true;
+            }
+            Path entFile = packRoot.resolve("data/curios/curios/entities").resolve("player_" + id + ".json");
+            if (Files.exists(entFile)) {
+                Files.delete(entFile);
+                any = true;
+            }
+            Path icon = packRoot.resolve("assets/curios/textures/slot").resolve("empty_" + id + "_slot.png");
+            if (Files.exists(icon)) {
+                Files.delete(icon);
+                any = true;
+            }
+            removeLangKey(packRoot.resolve("assets/curios/lang"), id);
+            if (!any) {
+                src.sendFailure(Component.literal("未找到已注册的饰品栏位 " + id + "。"));
+                return 0;
+            }
+            // 重建资源包 zip（客户端图标/翻译移除）
+            Path packsDir = server.getServerDirectory().toPath().resolve("resourcepacks");
+            Path zip = packsDir.resolve("curiosslot_slots.zip");
+            if (Files.exists(packRoot.resolve("pack.mcmeta"))) {
+                zipAssets(packRoot, zip);
+            }
+            // 数据包 reload + 通知客户端重载资源
+            if (server instanceof DedicatedServer) {
+                server.getPackRepository().reload();
+            } else {
+                addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
+                if (src.getEntity() instanceof ServerPlayer sp) {
+                    CuriosSlotNetworking.CHANNEL.send(
+                            PacketDistributor.PLAYER.with(() -> sp), new EnablePackPacket());
+                }
+            }
+            // 同步到所有世界并 reload，使槽位移除对所有存档立即生效
+            syncGlobalToAllWorlds(server);
+            // 把重建后的资源包广播给所有在线客户端，多人联机下同步移除图标/中文
+            broadcastResourcePack(server);
+            src.sendSuccess(() -> Component.literal("已清除饰品栏位 " + id + "。"), true);
+            return 1;
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] unregisterslot 出错: " + e.getMessage()));
+            return 0;
+        }
+    }
+
+    /** 从全局数据包 lang 文件中移除某槽位的翻译键（读回→删键→写回），文件不存在则跳过。 */
+    private static void removeLangKey(Path langDir, String id) {
+        if (!Files.exists(langDir)) return;
+        Gson gson = new Gson();
+        try (var s = Files.list(langDir)) {
+            s.filter(p -> p.getFileName().toString().endsWith(".json")).forEach(p -> {
+                try {
+                    JsonObject obj = gson.fromJson(
+                            new InputStreamReader(Files.newInputStream(p), StandardCharsets.UTF_8), JsonObject.class);
+                    if (obj == null) return;
+                    obj.remove("curios.identifier." + id);
+                    Files.write(p, gson.toJson(obj).getBytes(StandardCharsets.UTF_8));
+                } catch (Exception ignored) {
+                }
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 服务端读取全局数据包已注册槽位 id 列表，发给客户端清除界面。 */
+    public static void sendRegisteredSlots(ServerPlayer sp) {
+        try {
+            Path slotDir = sp.server.getServerDirectory().toPath()
+                    .resolve("datapacks").resolve("curiosslot_slots").resolve("data/curios/curios/slots");
+            List<String> ids = new ArrayList<>();
+            if (Files.exists(slotDir)) {
+                try (var s = Files.list(slotDir)) {
+                    s.filter(p -> p.getFileName().toString().endsWith(".json"))
+                     .sorted()
+                     .forEach(p -> ids.add(p.getFileName().toString().replaceAll("\\.json$", "")));
+                }
+            }
+            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+                    new RegisteredSlotListPacket(ids));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 客户端清除界面触发的 unregisterslot：先校验"仅房主/管理员"，再执行清除。 */
+    public static void unregisterSlotFromClient(ServerPlayer sp, String id) {
+        if (!canManageSlots(sp)) {
+            sp.sendSystemMessage(Component.literal("[curiosslot] 你没有 4 级权限，无法清除饰品栏位。"));
+            return;
+        }
+        unregisterSlotType(sp.createCommandSourceStack(), id);
+    }
+
+    /** 向 curios 命名空间的本地化文件写入/合并一个键值，先合并 Curios 内置翻译以免覆盖其他槽位名。 */
+    private static void writeCuriosLang(MinecraftServer server, Path langDir, String lang,
+                                        String slotId, String display) throws java.io.IOException {
+        Files.createDirectories(langDir);
+        Gson gson = new Gson();
+        JsonObject obj = new JsonObject();
+        try {
+            Optional<net.minecraft.server.packs.resources.Resource> res = server.getResourceManager()
+                    .getResource(new ResourceLocation("curios", "lang/" + lang + ".json"));
+            if (res.isPresent()) {
+                try (InputStream in = res.get().open()) {
+                    JsonObject base = gson.fromJson(
+                            new InputStreamReader(in, StandardCharsets.UTF_8), JsonObject.class);
+                    if (base != null) obj = base;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        obj.addProperty("curios.identifier." + slotId, display);
+        Files.write(langDir.resolve(lang + ".json"), gson.toJson(obj).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** 把数据包里的 assets（含 pack.mcmeta）打包成服务器资源包 zip。 */
+    private static void zipAssets(Path packRoot, Path zipFile) throws java.io.IOException {
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zipFile))) {
+            zos.putNextEntry(new ZipEntry("pack.mcmeta"));
+            Files.copy(packRoot.resolve("pack.mcmeta"), zos);
+            zos.closeEntry();
+            Path assets = packRoot.resolve("assets");
+            if (Files.isDirectory(assets)) {
+                try (var stream = Files.walk(assets)) {
+                    for (Path p : stream.filter(Files::isRegularFile).toList()) {
+                        String rel = packRoot.relativize(p).toString().replace('\\', '/');
+                        zos.putNextEntry(new ZipEntry(rel));
+                        Files.copy(p, zos);
+                        zos.closeEntry();
+                    }
+                }
+            }
         }
     }
 

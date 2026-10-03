@@ -104,10 +104,21 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
             }
             case "setDefault" -> {
                 int n = Math.max(0, p.count());
-                CuriosSlotMod.setDefault(server, target.getType(), p.slot(), n);
-                sp.sendSystemMessage(Component.literal("[curiosslot] 已设置实体类型 " + EntityType.getKey(target.getType())
-                        + " 的 " + p.slot() + " 默认数量为 " + n
-                        + "。已生成的生物需 /reload 或重新进入存档后按新默认值重置。"));
+                if (helper.getSlotType(p.slot()).isEmpty()) {
+                    sp.sendSystemMessage(Component.literal("[curiosslot] 槽位类型未注册: " + p.slot()));
+                    break;
+                }
+                try {
+                    // 与 register 一致：写数据包 entities 映射 + 记录默认数量 + 刷新缓存（受 autoReload 控制触发 reload）
+                    boolean reloaded = CuriosSlotMod.applyCreateSlot(
+                            (ServerLevel) target.level(), target.getType(), p.slot(), n);
+                    sp.sendSystemMessage(Component.literal("[curiosslot] 已设置实体类型 "
+                            + EntityType.getKey(target.getType()) + " 的 " + p.slot() + " 默认数量为 " + n + "。"
+                            + (reloaded ? "已自动重载生效。" : "请执行 /reload 或重进存档后生效。")
+                            + " 注意：已生成且没有该饰品栏位的生物，需重新进入存档后才会加载该栏位。"));
+                } catch (Exception e) {
+                    sp.sendSystemMessage(Component.literal("[curiosslot] 设置默认数量出错: " + e.getMessage()));
+                }
             }
             default -> {
             }

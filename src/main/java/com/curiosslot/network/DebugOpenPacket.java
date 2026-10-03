@@ -15,12 +15,14 @@ import java.util.function.Supplier;
 /**
  * 服务端 -> 客户端：/curiosslot open 打开调试界面时，把目标实体最新的栏位数据发到客户端。
  * existing：实体当前各槽位数量；defaults：该实体类型各槽位默认数量。
+ * canRegister：操作者是否拥有 4 级权限（决定"注册饰品栏位"按钮是否可见）。
  * 客户端收到后打开（或刷新已打开的）{@link CuriosDebugScreen}。
  */
 public record DebugOpenPacket(UUID uuid, String name,
                               Map<String, Integer> existing,
                               Map<String, Integer> defaults,
-                              List<String> creatable) {
+                              List<String> creatable,
+                              boolean canRegister) {
 
     public static void encode(DebugOpenPacket p, FriendlyByteBuf buf) {
         buf.writeUUID(p.uuid());
@@ -31,6 +33,7 @@ public record DebugOpenPacket(UUID uuid, String name,
         for (String s : p.creatable()) {
             buf.writeUtf(s);
         }
+        buf.writeBoolean(p.canRegister());
     }
 
     private static void writeIntMap(FriendlyByteBuf buf, Map<String, Integer> m) {
@@ -60,7 +63,8 @@ public record DebugOpenPacket(UUID uuid, String name,
         for (int i = 0; i < cr; i++) {
             creatable.add(buf.readUtf(64));
         }
-        return new DebugOpenPacket(uuid, name, existing, defaults, creatable);
+        boolean canRegister = buf.readBoolean();
+        return new DebugOpenPacket(uuid, name, existing, defaults, creatable, canRegister);
     }
 
     public static void handle(DebugOpenPacket p, Supplier<NetworkEvent.Context> ctx) {
@@ -70,7 +74,8 @@ public record DebugOpenPacket(UUID uuid, String name,
             if (mc.screen instanceof CuriosDebugScreen s && s.getTargetUuid().equals(p.uuid())) {
                 s.updateData(p.name(), p.existing(), p.defaults(), p.creatable());
             } else {
-                mc.setScreen(new CuriosDebugScreen(p.uuid(), p.name(), p.existing(), p.defaults(), p.creatable()));
+                mc.setScreen(new CuriosDebugScreen(p.uuid(), p.name(), p.existing(), p.defaults(),
+                        p.creatable(), p.canRegister()));
             }
         });
         c.setPacketHandled(true);

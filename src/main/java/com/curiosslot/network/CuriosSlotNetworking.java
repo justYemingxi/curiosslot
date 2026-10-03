@@ -28,15 +28,50 @@ public final class CuriosSlotNetworking {
                 .decoder(DebugRefreshPacket::decode)
                 .consumerMainThread(DebugRefreshPacket::handle)
                 .add();
-        CHANNEL.messageBuilder(ClientHelloPacket.class, 2, NetworkDirection.PLAY_TO_SERVER)
-                .encoder(ClientHelloPacket::encode)
-                .decoder(ClientHelloPacket::decode)
-                .consumerMainThread(ClientHelloPacket::handle)
-                .add();
         CHANNEL.messageBuilder(DebugOpenPacket.class, 3, NetworkDirection.PLAY_TO_CLIENT)
                 .encoder(DebugOpenPacket::encode)
                 .decoder(DebugOpenPacket::decode)
                 .consumerMainThread(DebugOpenPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(EnablePackPacket.class, 4, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(EnablePackPacket::encode)
+                .decoder(EnablePackPacket::decode)
+                .consumerMainThread(EnablePackPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(RequestSlotIconsPacket.class, 5, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(RequestSlotIconsPacket::encode)
+                .decoder(RequestSlotIconsPacket::decode)
+                .consumerMainThread(RequestSlotIconsPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SlotIconListPacket.class, 6, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(SlotIconListPacket::encode)
+                .decoder(SlotIconListPacket::decode)
+                .consumerMainThread(SlotIconListPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(RegisterSlotRequestPacket.class, 7, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(RegisterSlotRequestPacket::encode)
+                .decoder(RegisterSlotRequestPacket::decode)
+                .consumerMainThread(RegisterSlotRequestPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(RequestRegisteredSlotsPacket.class, 8, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(RequestRegisteredSlotsPacket::encode)
+                .decoder(RequestRegisteredSlotsPacket::decode)
+                .consumerMainThread(RequestRegisteredSlotsPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(RegisteredSlotListPacket.class, 9, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(RegisteredSlotListPacket::encode)
+                .decoder(RegisteredSlotListPacket::decode)
+                .consumerMainThread(RegisteredSlotListPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(UnregisterSlotRequestPacket.class, 10, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(UnregisterSlotRequestPacket::encode)
+                .decoder(UnregisterSlotRequestPacket::decode)
+                .consumerMainThread(UnregisterSlotRequestPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SyncResourcePackPacket.class, 11, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(SyncResourcePackPacket::encode)
+                .decoder(SyncResourcePackPacket::decode)
+                .consumerMainThread(SyncResourcePackPacket::handle)
                 .add();
     }
 
