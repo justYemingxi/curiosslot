@@ -32,7 +32,7 @@ import java.util.UUID;
 public class CuriosDebugScreen extends Screen {
 
     private static final int WIDTH = 270;
-    private static final int HEIGHT = 214;
+    private static final int HEIGHT = 230;
     private static final int LIST_TOP = 46;
     private static final int LIST_BOTTOM = 170;
     private static final int ROW_H = 18;
@@ -169,36 +169,49 @@ public class CuriosDebugScreen extends Screen {
                     selectMode = true;
                     scrollCreatable = 0;
                     rebuildButtons();
-                }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 38, WIDTH - 16, 16).build());
+                }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 54, WIDTH - 16, 16).build());
             } else {
                 int w3 = (WIDTH - 16) / 3;
                 addRenderableWidget(Button.builder(Component.literal("＋ 创建栏位"), b -> {
                     selectMode = true;
                     scrollCreatable = 0;
                     rebuildButtons();
-                }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 38, w3, 16).build());
+                }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 54, w3, 16).build());
                 // 注册饰品栏位：打开选择 icons 文件的界面（仅 4 级权限可见）
                 addRenderableWidget(Button.builder(Component.literal("注册饰品栏"), b -> {
                     CuriosSlotNetworking.CHANNEL.sendToServer(new RequestSlotIconsPacket());
                     net.minecraft.client.Minecraft.getInstance().setScreen(new RegisterSlotScreen(this));
-                }).bounds(this.leftPos + 8 + w3, this.topPos + HEIGHT - 38, w3, 16).build());
+                }).bounds(this.leftPos + 8 + w3, this.topPos + HEIGHT - 54, w3, 16).build());
                 // 清除饰品栏位：打开已注册栏位列表（仅 4 级权限可见）
                 addRenderableWidget(Button.builder(Component.literal("清除饰品栏"), b -> {
                     CuriosSlotNetworking.CHANNEL.sendToServer(new RequestRegisteredSlotsPacket());
                     net.minecraft.client.Minecraft.getInstance().setScreen(new UnregisterSlotScreen(this));
-                }).bounds(this.leftPos + 8 + w3 * 2, this.topPos + HEIGHT - 38, WIDTH - 16 - w3 * 2, 16).build());
+                }).bounds(this.leftPos + 8 + w3 * 2, this.topPos + HEIGHT - 54, WIDTH - 16 - w3 * 2, 16).build());
             }
-            // 全局重置：清除所有留痕，被 set/add 改过的生物将按默认数量重置（醒目标红，执行 /curiosslot reset）
+            // 重置为默认值：清除所有留痕，被 set/add 改过的生物将按默认数量重置（醒目标红，执行 /curiosslot reset）
             addRenderableWidget(Button.builder(
-                    Component.literal("全局重置默认值").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), b -> {
+                    Component.literal("重置为默认值").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), b -> {
                         net.minecraft.client.Minecraft.getInstance().player
                                 .connection.sendCommand("curiosslot reset");
-                    }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 22, (WIDTH - 16) / 2, 16).build());
-            // 清空配置：清除当前存档所有 curiosslot 数据包，回归原始数据（执行 /curiosslot clear）
+                    }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 38, (WIDTH - 16) / 2, 16).build());
+            // 清空配置：清除当前存档所有 curiosslot 数据包，若存在全局配置则改为全局配置，否则回归原始（执行 /curiosslot clear）
             addRenderableWidget(Button.builder(
                     Component.literal("清空配置").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), b -> {
                         net.minecraft.client.Minecraft.getInstance().player
                                 .connection.sendCommand("curiosslot clear");
+                    }).bounds(this.leftPos + 8 + (WIDTH - 16) / 2, this.topPos + HEIGHT - 38,
+                            (WIDTH - 16) / 2, 16).build());
+            // 全局配置保存：把当前存档的 curiosslot 数据包配置保存为全局配置（执行 /curiosslot saveglobal）
+            addRenderableWidget(Button.builder(
+                    Component.literal("全局配置保存").withStyle(ChatFormatting.YELLOW), b -> {
+                        net.minecraft.client.Minecraft.getInstance().player
+                                .connection.sendCommand("curiosslot saveglobal");
+                    }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 22, (WIDTH - 16) / 2, 16).build());
+            // 清除全局配置：清除已保存的全局配置，不改动各存档现有配置（执行 /curiosslot clearglobal）
+            addRenderableWidget(Button.builder(
+                    Component.literal("清除全局配置").withStyle(ChatFormatting.YELLOW), b -> {
+                        net.minecraft.client.Minecraft.getInstance().player
+                                .connection.sendCommand("curiosslot clearglobal");
                     }).bounds(this.leftPos + 8 + (WIDTH - 16) / 2, this.topPos + HEIGHT - 22,
                             (WIDTH - 16) / 2, 16).build());
         }

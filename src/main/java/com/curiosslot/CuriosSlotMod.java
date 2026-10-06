@@ -152,6 +152,9 @@ public class CuriosSlotMod {
     private static Set<String> TOUCHED = new HashSet<>();
     private static Map<String, Integer> DEFAULTS = new HashMap<>();
     private static boolean cachePrimed = false;
+    // 当前存档是否已应用过全局配置。已应用的存档在玩家修改默认值后不会再被全局配置反复覆盖，
+    // 直到玩家用 clear（清空配置）删掉现有配置后，才按全局配置重新应用。
+    private static boolean GLOBAL_APPLIED = false;
 
     private static void loadState(MinecraftServer server) {
         TOUCHED = new HashSet<>();
@@ -171,6 +174,9 @@ public class CuriosSlotMod {
                     DEFAULTS.put(e.getKey(), e.getValue().getAsInt());
                 }
             }
+            if (obj.has("globalApplied")) {
+                GLOBAL_APPLIED = obj.get("globalApplied").getAsBoolean();
+            }
         } catch (Exception ignored) {
         }
     }
@@ -188,6 +194,7 @@ public class CuriosSlotMod {
                 def.addProperty(e.getKey(), e.getValue());
             }
             root.add("defaults", def);
+            root.addProperty("globalApplied", GLOBAL_APPLIED);
             Files.write(p, new Gson().toJson(root).getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {
         }
@@ -250,17 +257,123 @@ public class CuriosSlotMod {
             }
         } catch (Exception ignored) {
         }
-        // 清空内存缓存，回归原始（无任何 mod 设定）
+        // 清空内存缓存
         REGISTERED = new HashMap<>();
         TOUCHED = new HashSet<>();
         DEFAULTS = new HashMap<>();
         cachePrimed = true;
+        // 需求：清空配置后，若存在全局配置，则改为全局配置；否则回归原始数据。
+        if (hasGlobalConfig(server)) {
+            try {
+                applyGlobalConfigToWorld(server);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        // 无全局配置（或应用失败）：回归原始
+        GLOBAL_APPLIED = false;
+        saveState(server);
         // 重置所有已加载实体的 Curios 槽位为槽位类型默认 size（回归原始，清除 setSlotsForType 的持久化遗留）
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity e : level.getEntities().getAll()) {
                 if (e instanceof LivingEntity le) {
                     resetEntitySlotsToDefault(le);
                 }
+            }
+        }
+        if (autoReload()) {
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "reload");
+        }
+    }
+
+    // ========== 全局配置（跨存档共享的 curiosslot 数据包配置）==========
+    // 全局配置存于游戏根目录 curiosslot_global/curiosslot/（含 pack.mcmeta、data/curiosslot/curios/entities/*.json、
+    // curiosslot_state.json 的 defaults）。saveglobal 保存当前存档配置；clearglobal 清除全局配置；
+    // onServerStarted 与 clear 后会自动把全局配置应用到当前存档（仅对未标记 globalApplied 的存档套用）。
+
+    private static Path globalConfigRoot(MinecraftServer server) {
+        return server.getServerDirectory().toPath().resolve("curiosslot_global");
+    }
+
+    public static boolean hasGlobalConfig(MinecraftServer server) {
+        return Files.exists(globalConfigRoot(server).resolve("curiosslot").resolve("pack.mcmeta"));
+    }
+
+    private static void setGlobalApplied(MinecraftServer server, boolean v) {
+        GLOBAL_APPLIED = v;
+        saveState(server);
+    }
+
+    /** /curiosslot saveglobal：把当前存档的 curiosslot 数据包配置（entities 映射 + defaults）保存为全局配置。 */
+    public static int saveGlobalConfig(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        try {
+            Path packRoot = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot");
+            if (!Files.exists(packRoot.resolve("pack.mcmeta"))) {
+                src.sendFailure(Component.literal("当前存档尚未创建任何 curiosslot 配置（请先用 /curiosslot register 创建栏位）。"));
+                return 0;
+            }
+            Path global = globalConfigRoot(server).resolve("curiosslot");
+            if (Files.exists(global)) deleteRecursive(global);
+            copyRecursive(packRoot.resolve("data"), global.resolve("data"));
+            Files.copy(packRoot.resolve("pack.mcmeta"), global.resolve("pack.mcmeta"),
+                    StandardCopyOption.REPLACE_EXISTING);
+            // 仅保存 defaults（跨存档有效），不含单实体留痕 touched（UUID 无跨存档意义）
+            JsonObject gstate = new JsonObject();
+            Gson gson = new Gson();
+            try {
+                if (Files.exists(packRoot.resolve("curiosslot_state.json"))) {
+                    JsonObject st = gson.fromJson(
+                            new InputStreamReader(Files.newInputStream(packRoot.resolve("curiosslot_state.json")), StandardCharsets.UTF_8),
+                            JsonObject.class);
+                    if (st != null && st.has("defaults")) gstate.add("defaults", st.getAsJsonObject("defaults"));
+                }
+            } catch (Exception ignored) {
+            }
+            if (!gstate.has("defaults")) gstate.add("defaults", new JsonObject());
+            Files.write(global.resolve("curiosslot_state.json"),
+                    gson.toJson(gstate).getBytes(StandardCharsets.UTF_8));
+            src.sendSuccess(() -> Component.literal("已把当前存档的 curiosslot 配置保存为全局配置。"
+                    + "新存档 / 尚未应用全局配置的存档进入时，将自动套用该全局配置。"), true);
+            return 1;
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] saveglobal 出错: " + e.getMessage()));
+            return 0;
+        }
+    }
+
+    /** /curiosslot clearglobal：清除已保存的全局配置（不主动改动各存档内现有配置）。 */
+    public static int clearGlobalConfig(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        Path global = globalConfigRoot(server);
+        if (!Files.exists(global)) {
+            src.sendFailure(Component.literal("当前没有已保存的全局配置。"));
+            return 0;
+        }
+        try {
+            deleteRecursive(global);
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("[curiosslot] clearglobal 出错: " + e.getMessage()));
+            return 0;
+        }
+        src.sendSuccess(() -> Component.literal("已清除全局配置。各存档现有的配置不会被改动；"
+                + "如需让某个存档回归原始，用 /curiosslot clear 清空其配置。"), true);
+        return 1;
+    }
+
+    /** 把全局配置应用到当前存档：清空存档现有 curiosslot 数据包 → 复制全局配置 → 标记 globalApplied → reload。 */
+    public static void applyGlobalConfigToWorld(MinecraftServer server) throws java.io.IOException {
+        Path global = globalConfigRoot(server).resolve("curiosslot");
+        Path packRoot = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot");
+        if (Files.exists(packRoot)) deleteRecursive(packRoot);
+        copyRecursive(global, packRoot);
+        // 必须先 refreshCaches 加载全局 state 的 defaults，再标记 globalApplied：
+        // setGlobalApplied 的 saveState 会用内存 DEFAULTS 写回 state.json，若先标记会覆盖刚复制的全局 defaults。
+        refreshCaches(server);
+        setGlobalApplied(server, true);
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                if (e instanceof LivingEntity le) resetEntitySlotsToDefault(le);
             }
         }
         if (autoReload()) {
@@ -358,7 +471,15 @@ public class CuriosSlotMod {
             syncGlobalToWorld(server);
         } catch (Exception ignored) {
         }
-        refreshCaches(server);
+        refreshCaches(server); // 读取当前存档 state（含 globalApplied 标记）
+        // 需求：已保存全局配置且当前存档尚未应用过（新存档 / 未套用的存档）时，自动套用全局配置。
+        // 已标记 globalApplied 的存档（玩家在存档内改过默认值）不会被全局配置反复覆盖。
+        try {
+            if (hasGlobalConfig(server) && !GLOBAL_APPLIED) {
+                applyGlobalConfigToWorld(server);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     // ========== 生成时挂钩（主机制）：实体一进世界，就把"已注册且未留痕"的槽位数量设为默认值 ==========
@@ -651,7 +772,9 @@ public class CuriosSlotMod {
                                 .executes(ctx -> {
                                     clearAllConfig(ctx.getSource().getServer());
                                     ctx.getSource().sendSuccess(
-                                            () -> Component.literal("已清空当前存档所有 curiosslot 数据包，回归原始数据。"),
+                                            () -> Component.literal(hasGlobalConfig(ctx.getSource().getServer())
+                                                    ? "已清空当前存档配置并套用全局配置。"
+                                                    : "已清空当前存档所有 curiosslot 数据包，回归原始数据。"),
                                             true);
                                     return 1;
                                 }))
@@ -664,6 +787,10 @@ public class CuriosSlotMod {
                                             true);
                                     return 1;
                                 }))
+                        .then(Commands.literal("saveglobal")
+                                .executes(ctx -> CuriosSlotMod.saveGlobalConfig(ctx.getSource())))
+                        .then(Commands.literal("clearglobal")
+                                .executes(ctx -> CuriosSlotMod.clearGlobalConfig(ctx.getSource())))
                         .then(Commands.literal("set")
                                 .then(Commands.argument("slot", StringArgumentType.word())
                                         .then(Commands.argument("count", IntegerArgumentType.integer())

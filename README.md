@@ -19,7 +19,7 @@
 
 ## 安装
 
-1. 把 `curiosslot-1.3.0.jar` 放进 `mods` 文件夹；
+1. 把 `curiosslot-1.4.0.jar` 放进 `mods` 文件夹；
 2. 启动游戏（需要 Curios API 已在 mods 中）；
 3. 进世界后使用下方指令。
 
@@ -38,6 +38,8 @@
 /curiosslot unregisterslot <槽位类型>
 /curiosslot reset
 /curiosslot clear
+/curiosslot saveglobal
+/curiosslot clearglobal
 /curiosslot open <目标|nearest>
 ```
 
@@ -49,7 +51,9 @@
 | `registerslot` | 为**整个生物类型**注册一个**全新的饰品栏位类型**（支持默认数量、中文名与图标） |
 | `unregisterslot` | 清除已注册的饰品栏位类型 |
 | `reset` | 清除全部 UUID 留痕，并立即将已加载生物的栏位重置回默认值 |
-| `clear` | 清空当前存档所有 curiosslot 数据包，回归原始数据 |
+| `clear` | 清空当前存档所有 curiosslot 数据包；若存在全局配置则自动**改为全局配置**，否则回归原始数据 |
+| `saveglobal` | 把**当前存档**的 curiosslot 数据包配置保存为**全局配置**（跨存档共享） |
+| `clearglobal` | 清除已保存的**全局配置**（不改动各存档现有的配置） |
 | `open` | 为**目标实体**打开 Curios 栏位**调试界面**（GUI），可查看/修改本实体栏位数量、设置类型默认数量、创建新槽位 |
 
 > **`<目标>`** 可用原版实体选择器（如 `@e[type=...]`）；也可用快捷词 **`nearest`**，代表"**当前维度内距离最近的（非玩家）实体**"。
@@ -108,6 +112,16 @@
 
 `registerslot` / `unregisterslot` 注册或清除饰品栏位后，会自动把对应资源包（槽位图标 + 中文名）**推送给已安装本模组的在线客户端**，玩家加入时也会自动同步，解决联机时客户端槽位图标紫黑乱码、无中文名的问题。未安装本模组的客户端不会收到推送，需手动把服务端生成的 `curiosslot_slots.zip` 放入客户端 `resourcepacks` 并启用。
 
+### 全局配置（跨存档共享）
+
+`/curiosslot saveglobal` 会把**当前存档**的 curiosslot 数据包配置（实体→槽位映射 + 默认数量）保存为**全局配置**，存放在游戏根目录。之后**新创建的存档**、以及**尚未应用过全局配置的存档**进入时，会自动清空自身配置并套用全局配置。
+
+- **已应用过全局配置的存档**：在存档内用 register / 调试界面改过默认值后，**不会再被全局配置覆盖**，直到你用 `clear`（清空配置）删掉现有配置。
+- **clear 增强**：清空当前配置后，若存在全局配置，则自动**改为全局配置**；没有全局配置才回归原始数据。
+- `/curiosslot clearglobal` 只删除全局配置副本，**不改动各存档现有的配置**。
+
+调试界面底部新增了两个按钮：**「重置为默认值」**（原「全局重置默认值」，执行 `/curiosslot reset`）、**「全局配置保存」**（执行 `/curiosslot saveglobal`）与**「清除全局配置」**（执行 `/curiosslot clearglobal`）。
+
 ### 权限
 
 `registerslot` / `unregisterslot` **仅服务端侧可用**（专用服务器控制台 / 单机主机），联机客户端不再显示注册/删除入口；其余指令需要 OP / 开启作弊。
@@ -149,7 +163,7 @@ necklace / ring / feet / scroll / spellbook / accessory
 gradlew build
 ```
 
-产物位于 `build/libs/curiosslot-1.3.0.jar`。
+产物位于 `build/libs/curiosslot-1.4.0.jar`。
 
 > 注意：本仓库**不含** `libs/`（Curios 的 jar 不在此公开分发，避免分发他人模组）。编译依赖为 `compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))`，如需从源码构建，请自行把对应版本的 Curios jar 放入 `libs/` 目录后执行 `gradlew build`。已编译好的 jar 可直接使用，无需自己构建。
 
