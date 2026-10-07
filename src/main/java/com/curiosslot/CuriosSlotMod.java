@@ -363,6 +363,10 @@ public class CuriosSlotMod {
 
     /** 把全局配置应用到当前存档：清空存档现有 curiosslot 数据包 → 复制全局配置 → 标记 globalApplied → reload。 */
     public static void applyGlobalConfigToWorld(MinecraftServer server) throws java.io.IOException {
+        // 全局配置只覆盖"类型默认栏位"，不应清掉单实体手动修改的留痕（touched）。
+        // 清空数据包会连 curiosslot_state.json 一起删，先暂存当前 TOUCHED，套用后再写回。
+        if (!cachePrimed) refreshCaches(server);
+        Set<String> keepTouched = new HashSet<>(TOUCHED);
         Path global = globalConfigRoot(server).resolve("curiosslot");
         Path packRoot = server.getWorldPath(LevelResource.DATAPACK_DIR).resolve("curiosslot");
         if (Files.exists(packRoot)) deleteRecursive(packRoot);
@@ -370,6 +374,8 @@ public class CuriosSlotMod {
         // 必须先 refreshCaches 加载全局 state 的 defaults，再标记 globalApplied：
         // setGlobalApplied 的 saveState 会用内存 DEFAULTS 写回 state.json，若先标记会覆盖刚复制的全局 defaults。
         refreshCaches(server);
+        // 恢复单实体保护留痕（全局配置不含 touched，套用后不应丢失手动保护）
+        TOUCHED.addAll(keepTouched);
         setGlobalApplied(server, true);
         for (ServerLevel level : server.getAllLevels()) {
             for (Entity e : level.getEntities().getAll()) {
@@ -388,6 +394,8 @@ public class CuriosSlotMod {
         ICuriosItemHandler handler = inv.resolve().orElse(null);
         if (handler == null) return;
         for (Map.Entry<String, ICurioStacksHandler> en : handler.getCurios().entrySet()) {
+            // 该实体的该槽位已被 set/add 手动留痕：尊重手动设置，不重置。
+            if (TOUCHED.contains(keyOfEntity(le, en.getKey()))) continue;
             int def = CuriosApi.getSlot(en.getKey())
                     .map(top.theillusivec4.curios.api.type.ISlotType::getSize).orElse(1);
             if (en.getValue().getSlots() != def) {

@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
 modId="curiosslot"
-version="1.4.0"
+version="1.4.1"
 displayName="Curios Slot"
 authors="justYemingxi"
 displayTest="IGNORE_ALL_VERSION"
