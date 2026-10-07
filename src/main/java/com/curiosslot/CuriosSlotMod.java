@@ -502,11 +502,9 @@ public class CuriosSlotMod {
         EntityType<?> type = le.getType();
         Set<String> slots = REGISTERED.get(type);
         if (slots == null || slots.isEmpty()) {
-            // 全局 REGISTERED 为空 = 已清空配置 / 从未注册：把该实体（含离线玩家遗留的持久化槽位数量）
-            // 全部重置为 Curios 槽位类型默认 size，回归原始。
-            if (REGISTERED.isEmpty()) {
-                resetEntitySlotsToDefault(le);
-            }
+            // 该类型未注册任何栏位：本 mod 不做干预，实体保持其原生（Curios 配置）栏位数量。
+            // 首次加入本 mod 时 REGISTERED 为空，绝不能把已有实体因游戏过程变更出的非默认栏位重置回默认；
+            // clear 清空配置后由 clearAllConfig 显式重置已加载实体，之后新实体按 Curios 默认生成即可。
             return;
         }
         ISlotHelper slotHelper = CuriosApi.getSlotHelper();
