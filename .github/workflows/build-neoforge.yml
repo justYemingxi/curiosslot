@@ -22,10 +22,9 @@ jobs:
 
       - name: Build NeoForge jar
         run: |
-          echo "=== NeoGradle marker metadata ==="
-          curl -sS -m 30 https://maven.neoforged.net/releases/net/neoforged/gradle/net.neoforged.gradle.gradle.plugin/maven-metadata.xml | tee /tmp/ngmeta.txt || true
-          echo "::error::NEOGRADLE_VER=$(grep -o '<version>[^<]*</version>' /tmp/ngmeta.txt | tr -d ' ' | tr '\n' ' ')"
-          echo "::error::NEOFORGE_TAIL=$(curl -sS -m 30 https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml | grep -o '<version>[^<]*</version>' | tr -d ' ' | tr '\n' ' ' | tail -c 300)"
+          echo "=== ModDevGradle marker metadata ==="
+          curl -sS -m 30 https://maven.neoforged.net/releases/net/neoforged/moddev/net.neoforged.moddev.gradle.plugin/maven-metadata.xml | tee /tmp/mdmeta.txt || true
+          echo "::error::MODDEV_VER=$(grep -o '<version>[^<]*</version>' /tmp/mdmeta.txt | tr -d ' ' | tr '\n' ' ')"
           echo "=== gradle build ==="
           ./gradlew clean build -x test --no-daemon --console=plain
 
