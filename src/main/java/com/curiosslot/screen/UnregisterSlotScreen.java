@@ -8,8 +8,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -55,7 +55,7 @@ public class UnregisterSlotScreen extends Screen {
     protected void init() {
         this.leftPos = (this.width - WIDTH) / 2;
         this.topPos = (this.height - HEIGHT) / 2;
-        CuriosSlotNetworking.CHANNEL.sendToServer(new RequestRegisteredSlotsPacket());
+        CuriosSlotNetworking.sendToServer(new RequestRegisteredSlotsPacket());
         lastVersion = version;
         rebuildButtons();
     }
@@ -79,7 +79,7 @@ public class UnregisterSlotScreen extends Screen {
         // 清除该栏位
         addRenderableWidget(Button.builder(Component.literal("清除该栏位"), b -> {
             if (selected == null) return;
-            CuriosSlotNetworking.CHANNEL.sendToServer(new UnregisterSlotRequestPacket(selected));
+            CuriosSlotNetworking.sendToServer(new UnregisterSlotRequestPacket(selected));
         }).bounds(this.leftPos + 8, this.topPos + 150, (WIDTH - 16) / 2, 16).build());
 
         // 返回上一界面
@@ -114,7 +114,7 @@ public class UnregisterSlotScreen extends Screen {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             if (selected != null) {
-                CuriosSlotNetworking.CHANNEL.sendToServer(new UnregisterSlotRequestPacket(selected));
+                CuriosSlotNetworking.sendToServer(new UnregisterSlotRequestPacket(selected));
                 return true;
             }
         }

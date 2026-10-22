@@ -2,7 +2,7 @@ plugins {
     id 'eclipse'
     id 'idea'
     id 'maven-publish'
-    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'net.neoforged.gradle' version '[7,8)'
 }
 
 version = '1.4.1'
@@ -12,26 +12,26 @@ base {
     archivesName = 'curiosslot'
 }
 
-// Mojang 1.20.1 需要 Java 17
-java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+// NeoForge 1.21.1 需要 Java 21
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 // 强制 UTF-8，避免中文注释/字符串在 GBK 环境下乱码
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     // Curios 的 ISlotHelper/CuriosApi 大量 API 被 @Deprecated(forRemoval=true) 标记，
-    // 但这些是 1.20.1 的正式接口，必须使用；关闭 removal 告警以免被当作编译错误。
+    // 但这些是 1.21.1 的正式接口，必须使用；关闭 removal 告警以免被当作编译错误。
     options.compilerArgs += '-Xlint:-removal'
 }
 
 minecraft {
-    // 官方映射 1.20.1
-    mappings channel: 'official', version: '1.20.1'
+    // 官方映射 1.21.1
+    mappings channel: 'official', version: '1.21.1'
 
     runs {
         client {
             workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'debug'
+            property 'neoforge.logging.markers', 'REGISTRIES'
+            property 'neoforge.logging.console.level', 'debug'
             mods {
                 curiosslot {
                     source sourceSets.main
@@ -40,7 +40,7 @@ minecraft {
         }
         server {
             workingDirectory project.file('run')
-            property 'forge.logging.console.level', 'debug'
+            property 'neoforge.logging.console.level', 'debug'
             mods {
                 curiosslot {
                     source sourceSets.main
@@ -58,10 +58,10 @@ repositories {
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.20.1-47.4.22'
+    implementation "net.neoforged:neoforge:21.1.263"
 
     // Curios API：编译依赖（运行时由玩家装 Curios 提供）
-    compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))
+    compileOnly "top.theillusivec4:curios-neoforge:9.5.1+1.21.1"
 }
 
 jar {

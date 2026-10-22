@@ -10,8 +10,8 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.LinkedHashMap;
@@ -179,12 +179,12 @@ public class CuriosDebugScreen extends Screen {
                 }).bounds(this.leftPos + 8, this.topPos + HEIGHT - 54, w3, 16).build());
                 // 注册饰品栏位：打开选择 icons 文件的界面（仅 4 级权限可见）
                 addRenderableWidget(Button.builder(Component.literal("注册饰品栏"), b -> {
-                    CuriosSlotNetworking.CHANNEL.sendToServer(new RequestSlotIconsPacket());
+                    CuriosSlotNetworking.sendToServer(new RequestSlotIconsPacket());
                     net.minecraft.client.Minecraft.getInstance().setScreen(new RegisterSlotScreen(this));
                 }).bounds(this.leftPos + 8 + w3, this.topPos + HEIGHT - 54, w3, 16).build());
                 // 清除饰品栏位：打开已注册栏位列表（仅 4 级权限可见）
                 addRenderableWidget(Button.builder(Component.literal("清除饰品栏"), b -> {
-                    CuriosSlotNetworking.CHANNEL.sendToServer(new RequestRegisteredSlotsPacket());
+                    CuriosSlotNetworking.sendToServer(new RequestRegisteredSlotsPacket());
                     net.minecraft.client.Minecraft.getInstance().setScreen(new UnregisterSlotScreen(this));
                 }).bounds(this.leftPos + 8 + w3 * 2, this.topPos + HEIGHT - 54, WIDTH - 16 - w3 * 2, 16).build());
             }
@@ -219,16 +219,16 @@ public class CuriosDebugScreen extends Screen {
 
     private void setCount(String slot, int count) {
         if (count < 0) count = 0;
-        CuriosSlotNetworking.CHANNEL.sendToServer(new DebugActionPacket(targetUuid, "set", slot, count));
+        CuriosSlotNetworking.sendToServer(new DebugActionPacket(targetUuid, "set", slot, count));
     }
 
     private void setDefaultCount(String slot, int count) {
         if (count < 0) count = 0;
-        CuriosSlotNetworking.CHANNEL.sendToServer(new DebugActionPacket(targetUuid, "setDefault", slot, count));
+        CuriosSlotNetworking.sendToServer(new DebugActionPacket(targetUuid, "setDefault", slot, count));
     }
 
     private void createSlot(String slot, int count) {
-        CuriosSlotNetworking.CHANNEL.sendToServer(new DebugActionPacket(targetUuid, "create", slot, Math.max(1, count)));
+        CuriosSlotNetworking.sendToServer(new DebugActionPacket(targetUuid, "create", slot, Math.max(1, count)));
     }
 
     private static int parseCount(String s, int def, int min, int max) {

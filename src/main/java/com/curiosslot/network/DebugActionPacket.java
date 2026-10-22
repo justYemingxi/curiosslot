@@ -1,16 +1,20 @@
 package com.curiosslot.network;
 
 import com.curiosslot.CuriosSlotMod;
-import net.minecraft.network.FriendlyByteBuf;
+import io.netty.buffer.ByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.ServerPayloadContext;
 import top.theillusivec4.curios.api.CuriosApi;
 import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
 import top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler;
@@ -22,34 +26,37 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 /**
  * 客户端 -> 服务端：调试界面上的一个操作。
  * action：create（为该生物类型创建新栏位）/ set（设置已有栏位数量）/ add（增加已有栏位数量）。
  */
-public record DebugActionPacket(UUID uuid, String action, String slot, int count) {
+public record DebugActionPacket(UUID uuid, String action, String slot, int count) implements CustomPacketPayload {
 
-    public static void encode(DebugActionPacket p, FriendlyByteBuf buf) {
-        buf.writeUUID(p.uuid());
-        buf.writeUtf(p.action());
-        buf.writeUtf(p.slot());
-        buf.writeInt(p.count());
+    public static final CustomPacketPayload.Type<DebugActionPacket> TYPE =
+            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("curiosslot", "debug_action"));
+    public static final StreamCodec<ByteBuf, DebugActionPacket> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.UUID, DebugActionPacket::uuid,
+            ByteBufCodecs.STRING_UTF8, DebugActionPacket::action,
+            ByteBufCodecs.STRING_UTF8, DebugActionPacket::slot,
+            ByteBufCodecs.VAR_INT, DebugActionPacket::count,
+            DebugActionPacket::new
+    );
+
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 
-    public static DebugActionPacket decode(FriendlyByteBuf buf) {
-        return new DebugActionPacket(buf.readUUID(), buf.readUtf(32), buf.readUtf(64), buf.readInt());
-    }
-
-    public static void handle(DebugActionPacket p, Supplier<NetworkEvent.Context> ctx) {
-        NetworkEvent.Context c = ctx.get();
-        c.enqueueWork(() -> {
-            ServerPlayer sp = c.getSender();
-            if (sp != null) {
-                handleServer(sp, p);
+    public static void handle(DebugActionPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context instanceof ServerPayloadContext spc) {
+                ServerPlayer sp = spc.getPlayer();
+                if (sp != null) {
+                    handleServer(sp, p);
+                }
             }
         });
-        c.setPacketHandled(true);
     }
 
     private static void handleServer(ServerPlayer sp, DebugActionPacket p) {
@@ -109,7 +116,6 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
                     break;
                 }
                 try {
-                    // 与 register 一致：写数据包 entities 映射 + 记录默认数量 + 刷新缓存（受 autoReload 控制触发 reload）
                     boolean reloaded = CuriosSlotMod.applyCreateSlot(
                             (ServerLevel) target.level(), target.getType(), p.slot(), n);
                     sp.sendSystemMessage(Component.literal("[curiosslot] 已设置实体类型 "
@@ -158,8 +164,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
                 creatable.add(s);
             }
         }
-        CuriosSlotNetworking.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> sp),
+        PacketDistributor.sendToPlayer(sp,
                 new DebugRefreshPacket(target.getUUID(), target.getName().getString(), existing, defaults, creatable));
     }
 }

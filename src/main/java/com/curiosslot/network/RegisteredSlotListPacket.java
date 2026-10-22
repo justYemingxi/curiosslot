@@ -1,43 +1,53 @@
 package com.curiosslot.network;
 
 import com.curiosslot.screen.UnregisterSlotScreen;
+import io.netty.buffer.ByteBuf;
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
 /**
  * 服务端 -> 客户端：已注册槽位 id 列表，供清除饰品栏位界面选择。
  */
-public record RegisteredSlotListPacket(List<String> ids) {
+public record RegisteredSlotListPacket(List<String> ids) implements CustomPacketPayload {
 
-    public static void encode(RegisteredSlotListPacket p, FriendlyByteBuf buf) {
-        buf.writeInt(p.ids().size());
-        for (String s : p.ids()) {
-            buf.writeUtf(s);
-        }
+    public static final CustomPacketPayload.Type<RegisteredSlotListPacket> TYPE =
+            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("curiosslot", "registered_slot_list"));
+
+    private static final StreamCodec<ByteBuf, List<String>> STR_LIST = StreamCodec.of(
+            (buf, list) -> {
+                buf.writeInt(list.size());
+                for (String s : list) {
+                    buf.writeUtf(s);
+                }
+            },
+            (buf) -> {
+                int n = buf.readInt();
+                List<String> l = new ArrayList<>();
+                for (int i = 0; i < n; i++) {
+                    l.add(buf.readUtf(64));
+                }
+                return l;
+            });
+
+    public static final StreamCodec<ByteBuf, RegisteredSlotListPacket> STREAM_CODEC =
+            StreamCodec.composite(STR_LIST, RegisteredSlotListPacket::ids, RegisteredSlotListPacket::new);
+
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 
-    public static RegisteredSlotListPacket decode(FriendlyByteBuf buf) {
-        int n = buf.readInt();
-        List<String> ids = new ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            ids.add(buf.readUtf(64));
-        }
-        return new RegisteredSlotListPacket(ids);
-    }
-
-    public static void handle(RegisteredSlotListPacket p, Supplier<NetworkEvent.Context> ctx) {
-        NetworkEvent.Context c = ctx.get();
-        c.enqueueWork(() -> {
+    public static void handle(RegisteredSlotListPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+        context.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc.screen instanceof UnregisterSlotScreen s) {
                 s.setSlotIds(p.ids());
             }
         });
-        c.setPacketHandled(true);
     }
 }

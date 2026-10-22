@@ -30,28 +30,29 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.loading.FMLPaths;
-import net.minecraftforge.event.RegisterCommandsEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityJoinLevelEvent;
-import net.minecraftforge.event.entity.player.PlayerEvent;
-import net.minecraftforge.event.entity.player.PlayerInteractEvent;
-import net.minecraftforge.event.entity.player.ItemTooltipEvent;
+import net.neoforged.neoforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
 import java.nio.file.StandardCopyOption;
 import net.minecraft.server.dedicated.DedicatedServer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
-import net.minecraftforge.event.server.ServerStartedEvent;
-import net.minecraftforge.eventbus.api.IEventBus;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.config.ModConfig;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.neoforged.neoforge.event.tick.Phase;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import top.theillusivec4.curios.api.CuriosApi;
 import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
 import top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler;
@@ -135,7 +136,7 @@ public class CuriosSlotMod {
     }
 
     private static String keyOf(EntityType<?> type, String slot) {
-        ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(type);
+        ResourceLocation id = BuiltInRegistries.ENTITY_TYPE.getKey(type);
         return (id != null ? id.toString() : "?") + "#" + slot;
     }
 
@@ -208,8 +209,8 @@ public class CuriosSlotMod {
         for (String key : DEFAULTS.keySet()) {
             int idx = key.lastIndexOf('#');
             if (idx <= 0 || idx >= key.length() - 1) continue;
-            EntityType<?> type = ForgeRegistries.ENTITY_TYPES
-                    .getValue(ResourceLocation.tryParse(key.substring(0, idx)));
+            EntityType<?> type = BuiltInRegistries.ENTITY_TYPE
+                    .get(ResourceLocation.tryParse(key.substring(0, idx)));
             if (type != null) {
                 REGISTERED.computeIfAbsent(type, k -> new HashSet<>()).add(key.substring(idx + 1));
             }
@@ -447,7 +448,7 @@ public class CuriosSlotMod {
                 try (InputStreamReader r = new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8)) {
                     JsonObject obj = JsonParser.parseReader(r).getAsJsonObject();
                     for (JsonElement ent : obj.getAsJsonArray("entities")) {
-                        EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(ResourceLocation.tryParse(ent.getAsString()));
+                        EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.get(ResourceLocation.tryParse(ent.getAsString()));
                         if (type == null) continue;
                         Set<String> slots = map.computeIfAbsent(type, k -> new HashSet<>());
                         for (JsonElement s : obj.getAsJsonArray("slots")) {
@@ -529,8 +530,8 @@ public class CuriosSlotMod {
     // 数据来自缓存（仅 register/set/add/首次 tick 刷新），实体用按类型索引查询，开销很小；
     // 因生成钩子已让新实体出生即为默认数量，稳态下几乎不会有重设动作，不会出现大批量重设卡顿。
     @SubscribeEvent
-    public void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+    public void onServerTick(ServerTickEvent event) {
+        if (event.getPhase() != Phase.END) return;
 
         MinecraftServer server = event.getServer();
 
@@ -568,12 +569,11 @@ public class CuriosSlotMod {
         }
     }
 
-    public CuriosSlotMod(FMLJavaModLoadingContext context) {
-        IEventBus modEventBus = context.getModEventBus();
-        CuriosSlotNetworking.register();
-        MinecraftForge.EVENT_BUS.register(this);
-        MinecraftForge.EVENT_BUS.register(ClientPackEvents.class);
-        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, CONFIG_SPEC);
+    public CuriosSlotMod(IEventBus modEventBus, ModContainer container) {
+        modEventBus.addListener(CuriosSlotNetworking::register);
+        NeoForge.EVENT_BUS.register(this);
+        NeoForge.EVENT_BUS.register(ClientPackEvents.class);
+        container.registerConfig(ModConfig.Type.COMMON, CONFIG_SPEC);
     }
 
     /** 向单个客户端下发当前生成的 curiosslot_slots 资源包（服务端已有 zip 时），供其写盘加载。 */
@@ -582,7 +582,7 @@ public class CuriosSlotMod {
             Path zip = sp.server.getServerDirectory().toPath()
                     .resolve("resourcepacks").resolve("curiosslot_slots.zip");
             if (!Files.exists(zip)) return;
-            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+            PacketDistributor.sendToPlayer(sp,
                     new SyncResourcePackPacket(Files.readAllBytes(zip)));
         } catch (Exception ignored) {
         }
@@ -635,8 +635,8 @@ public class CuriosSlotMod {
 
     /** 客户端进世界时兜底启用 curiosslot_slots 资源包，保证重启/重进存档后图标与中文名必然生效。 */
     public static final class ClientPackEvents {
-        @net.minecraftforge.eventbus.api.SubscribeEvent
-        public static void onClientJoin(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingIn ev) {
+        @SubscribeEvent
+        public static void onClientJoin(ClientPlayerNetworkEvent.LoggingIn ev) {
             enableCustomPack();
         }
     }
@@ -935,8 +935,7 @@ public class CuriosSlotMod {
             Map<String, Integer> existing = collectExisting(living);
             Map<String, Integer> defaults = collectDefaults(living);
             List<String> creatable = collectCreatable(living);
-            CuriosSlotNetworking.CHANNEL.send(
-                    PacketDistributor.PLAYER.with(() -> sp),
+            PacketDistributor.sendToPlayer(sp,
                     new DebugOpenPacket(uuid, name, existing, defaults, creatable, canManageSlots(sp)));
             // 不再发送"已打开"提示：客户端未安装 curiosslot 时收不到该包，提示会误导（GUI 实际未弹出）
             return true;
@@ -1026,7 +1025,7 @@ public class CuriosSlotMod {
                 src.sendFailure(Component.literal("实体类型ID格式不正确: " + typeId));
                 return 0;
             }
-            EntityType<?> et = ForgeRegistries.ENTITY_TYPES.getValue(rl);
+            EntityType<?> et = BuiltInRegistries.ENTITY_TYPE.get(rl);
             if (et == null) {
                 src.sendFailure(Component.literal("实体类型不存在: " + typeId));
                 return 0;
@@ -1049,7 +1048,7 @@ public class CuriosSlotMod {
 
             // 无论该类型是否原本已拥有此槽位，register 一律写数据包 entities 映射 + 记录默认数量，
             // 让 Curios 认识该 (类型,槽位)，再叠加默认数量（defaultCount 无覆盖时回退 Curios 全局配置）。
-            EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(ResourceLocation.tryParse(typeId));
+            EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.get(ResourceLocation.tryParse(typeId));
 
             var server = src.getServer();
 
@@ -1209,8 +1208,7 @@ public class CuriosSlotMod {
                 // 单机：把资源包写进 options.txt 持久化启用（下次启动自动加载，原版机制最可靠），并即时尝试启用
                 addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
                 if (src.getEntity() instanceof ServerPlayer sp) {
-                    CuriosSlotNetworking.CHANNEL.send(
-                            PacketDistributor.PLAYER.with(() -> sp), new EnablePackPacket());
+                    PacketDistributor.sendToPlayer(sp, new EnablePackPacket());
                 }
             }
 
@@ -1299,7 +1297,7 @@ public class CuriosSlotMod {
                      .forEach(p -> ids.add(p.getFileName().toString().replaceAll("\\.png$", "")));
                 }
             }
-            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+            PacketDistributor.sendToPlayer(sp,
                     new SlotIconListPacket(ids));
         } catch (Exception ignored) {
         }
@@ -1357,8 +1355,7 @@ public class CuriosSlotMod {
             } else {
                 addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
                 if (src.getEntity() instanceof ServerPlayer sp) {
-                    CuriosSlotNetworking.CHANNEL.send(
-                            PacketDistributor.PLAYER.with(() -> sp), new EnablePackPacket());
+                    PacketDistributor.sendToPlayer(sp, new EnablePackPacket());
                 }
             }
             // 同步到所有世界并 reload，使槽位移除对所有存档立即生效
@@ -1405,7 +1402,7 @@ public class CuriosSlotMod {
                      .forEach(p -> ids.add(p.getFileName().toString().replaceAll("\\.json$", "")));
                 }
             }
-            CuriosSlotNetworking.CHANNEL.send(PacketDistributor.PLAYER.with(() -> sp),
+            PacketDistributor.sendToPlayer(sp,
                     new RegisteredSlotListPacket(ids));
         } catch (Exception ignored) {
         }

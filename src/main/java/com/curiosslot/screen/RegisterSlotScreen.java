@@ -8,8 +8,8 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -59,7 +59,7 @@ public class RegisterSlotScreen extends Screen {
         this.leftPos = (this.width - WIDTH) / 2;
         this.topPos = (this.height - HEIGHT) / 2;
         // 打开时向服务端请求图标列表
-        CuriosSlotNetworking.CHANNEL.sendToServer(new RequestSlotIconsPacket());
+        CuriosSlotNetworking.sendToServer(new RequestSlotIconsPacket());
         lastVersion = version;
         rebuildButtons();
     }
@@ -98,7 +98,7 @@ public class RegisterSlotScreen extends Screen {
             String id = idBox.getValue().trim();
             if (id.isEmpty()) return;
             String name = nameBox.getValue().trim();
-            CuriosSlotNetworking.CHANNEL.sendToServer(new RegisterSlotRequestPacket(id, name));
+            CuriosSlotNetworking.sendToServer(new RegisterSlotRequestPacket(id, name));
         }).bounds(this.leftPos + 8, this.topPos + 150, (WIDTH - 16) / 2, 16).build());
 
         // 返回上一界面
@@ -136,7 +136,7 @@ public class RegisterSlotScreen extends Screen {
             if (nameBox != null && nameBox.isFocused()) {
                 String id = idBox.getValue().trim();
                 if (!id.isEmpty()) {
-                    CuriosSlotNetworking.CHANNEL.sendToServer(
+                    CuriosSlotNetworking.sendToServer(
                             new RegisterSlotRequestPacket(id, nameBox.getValue().trim()));
                 }
                 return true;

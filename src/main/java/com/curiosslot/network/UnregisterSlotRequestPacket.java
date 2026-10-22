@@ -1,33 +1,38 @@
 package com.curiosslot.network;
 
 import com.curiosslot.CuriosSlotMod;
-import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
-
-import java.util.function.Supplier;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.ServerPayloadContext;
 
 /**
  * 客户端 -> 服务端：清除饰品栏位界面点击"清除该栏位"后，请求服务端执行 unregisterslot。
  * 服务端会校验操作者 4 级权限。
  */
-public record UnregisterSlotRequestPacket(String id) {
+public record UnregisterSlotRequestPacket(String id) implements CustomPacketPayload {
 
-    public static void encode(UnregisterSlotRequestPacket p, FriendlyByteBuf buf) {
-        buf.writeUtf(p.id());
+    public static final CustomPacketPayload.Type<UnregisterSlotRequestPacket> TYPE =
+            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("curiosslot", "unregister_slot_request"));
+    public static final StreamCodec<ByteBuf, UnregisterSlotRequestPacket> STREAM_CODEC =
+            StreamCodec.composite(ByteBufCodecs.STRING_UTF8, UnregisterSlotRequestPacket::id, UnregisterSlotRequestPacket::new);
+
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 
-    public static UnregisterSlotRequestPacket decode(FriendlyByteBuf buf) {
-        return new UnregisterSlotRequestPacket(buf.readUtf(64));
-    }
-
-    public static void handle(UnregisterSlotRequestPacket p, Supplier<NetworkEvent.Context> ctx) {
-        NetworkEvent.Context c = ctx.get();
-        c.enqueueWork(() -> {
-            var sender = c.getSender();
-            if (sender != null) {
-                CuriosSlotMod.unregisterSlotFromClient(sender, p.id());
+    public static void handle(UnregisterSlotRequestPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context instanceof ServerPayloadContext spc) {
+                ServerPlayer sp = spc.getPlayer();
+                if (sp != null) {
+                    CuriosSlotMod.unregisterSlotFromClient(sp, p.id());
+                }
             }
         });
-        c.setPacketHandled(true);
     }
 }

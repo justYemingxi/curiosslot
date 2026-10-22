@@ -1,34 +1,41 @@
 package com.curiosslot.network;
 
 import com.curiosslot.CuriosSlotMod;
-import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
-
-import java.util.function.Supplier;
+import io.netty.buffer.ByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.ServerPayloadContext;
 
 /**
  * 客户端 -> 服务端：注册饰品栏位界面点击"注册饰品栏"后，请求服务端执行 registerslot。
  * 服务端会校验操作者 4 级权限。
  */
-public record RegisterSlotRequestPacket(String id, String displayName) {
+public record RegisterSlotRequestPacket(String id, String displayName) implements CustomPacketPayload {
 
-    public static void encode(RegisterSlotRequestPacket p, FriendlyByteBuf buf) {
-        buf.writeUtf(p.id());
-        buf.writeUtf(p.displayName());
+    public static final CustomPacketPayload.Type<RegisterSlotRequestPacket> TYPE =
+            new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("curiosslot", "register_slot_request"));
+    public static final StreamCodec<ByteBuf, RegisterSlotRequestPacket> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, RegisterSlotRequestPacket::id,
+            ByteBufCodecs.STRING_UTF8, RegisterSlotRequestPacket::displayName,
+            RegisterSlotRequestPacket::new
+    );
+
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 
-    public static RegisterSlotRequestPacket decode(FriendlyByteBuf buf) {
-        return new RegisterSlotRequestPacket(buf.readUtf(64), buf.readUtf(256));
-    }
-
-    public static void handle(RegisterSlotRequestPacket p, Supplier<NetworkEvent.Context> ctx) {
-        NetworkEvent.Context c = ctx.get();
-        c.enqueueWork(() -> {
-            var sender = c.getSender();
-            if (sender != null) {
-                CuriosSlotMod.registerSlotFromClient(sender, p.id(), p.displayName());
+    public static void handle(RegisterSlotRequestPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+        context.enqueueWork(() -> {
+            if (context instanceof ServerPayloadContext spc) {
+                ServerPlayer sp = spc.getPlayer();
+                if (sp != null) {
+                    CuriosSlotMod.registerSlotFromClient(sp, p.id(), p.displayName());
+                }
             }
         });
-        c.setPacketHandled(true);
     }
 }
