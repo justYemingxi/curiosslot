@@ -24,7 +24,7 @@ public record EnablePackPacket() implements CustomPacketPayload {
         return TYPE;
     }
 
-    public static void handle(EnablePackPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(EnablePackPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(CuriosSlotMod::enableCustomPack);
     }
 }

@@ -22,14 +22,14 @@ public record SlotIconListPacket(List<String> ids) implements CustomPacketPayloa
             (buf, list) -> {
                 buf.writeInt(list.size());
                 for (String s : list) {
-                    buf.writeUtf(s);
+                    ByteBufCodecs.STRING_UTF8.encode(buf, s);
                 }
             },
             (buf) -> {
                 int n = buf.readInt();
                 List<String> l = new ArrayList<>();
                 for (int i = 0; i < n; i++) {
-                    l.add(buf.readUtf(64));
+                    l.add(ByteBufCodecs.STRING_UTF8.decode(buf));
                 }
                 return l;
             });
@@ -42,7 +42,7 @@ public record SlotIconListPacket(List<String> ids) implements CustomPacketPayloa
         return TYPE;
     }
 
-    public static void handle(SlotIconListPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(SlotIconListPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc.screen instanceof RegisterSlotScreen s) {

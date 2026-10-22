@@ -7,7 +7,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.ServerPayloadContext;
+import net.neoforged.neoforge.network.handling.ServerPayloadContext;
 
 /**
  * 客户端 -> 服务端：注册饰品栏位界面点击"注册饰品栏"后，请求服务端执行 registerslot。
@@ -28,7 +28,7 @@ public record RegisterSlotRequestPacket(String id, String displayName) implement
         return TYPE;
     }
 
-    public static void handle(RegisterSlotRequestPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(RegisterSlotRequestPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
                 ServerPlayer sp = spc.getPlayer();

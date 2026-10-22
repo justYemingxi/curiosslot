@@ -3,6 +3,7 @@ package com.curiosslot.network;
 import com.curiosslot.CuriosSlotMod;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -14,7 +15,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.neoforged.neoforge.network.PacketDistributor;
-import net.neoforged.neoforge.network.ServerPayloadContext;
+import net.neoforged.neoforge.network.handling.ServerPayloadContext;
 import top.theillusivec4.curios.api.CuriosApi;
 import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
 import top.theillusivec4.curios.api.type.inventory.ICurioStacksHandler;
@@ -36,7 +37,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
     public static final CustomPacketPayload.Type<DebugActionPacket> TYPE =
             new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("curiosslot", "debug_action"));
     public static final StreamCodec<ByteBuf, DebugActionPacket> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.UUID, DebugActionPacket::uuid,
+            UUIDUtil.STREAM_CODEC, DebugActionPacket::uuid,
             ByteBufCodecs.STRING_UTF8, DebugActionPacket::action,
             ByteBufCodecs.STRING_UTF8, DebugActionPacket::slot,
             ByteBufCodecs.VAR_INT, DebugActionPacket::count,
@@ -48,7 +49,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
         return TYPE;
     }
 
-    public static void handle(DebugActionPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(DebugActionPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
                 ServerPlayer sp = spc.getPlayer();
@@ -95,7 +96,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
                     sp.sendSystemMessage(Component.literal("[curiosslot] 目标实体没有 Curios 饰品栏。"));
                     break;
                 }
-                ICuriosItemHandler handler = inv.resolve().orElse(null);
+                ICuriosItemHandler handler = inv.orElse(null);
                 if (handler == null || handler.getStacksHandler(p.slot()).isEmpty()) {
                     sp.sendSystemMessage(Component.literal("[curiosslot] 该实体没有 " + p.slot() + " 栏位，无法修改。"));
                     break;
@@ -149,7 +150,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
         Map<String, Integer> existing = new LinkedHashMap<>();
         var inv = CuriosApi.getCuriosInventory(target);
         if (inv.isPresent()) {
-            ICuriosItemHandler handler = inv.resolve().orElse(null);
+            ICuriosItemHandler handler = inv.orElse(null);
             if (handler != null) {
                 for (Map.Entry<String, ICurioStacksHandler> e : handler.getCurios().entrySet()) {
                     existing.put(e.getKey(), e.getValue().getSlots());

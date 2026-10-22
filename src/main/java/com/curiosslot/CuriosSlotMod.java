@@ -30,7 +30,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.storage.LevelResource;
-import net.neoforged.neoforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -51,7 +51,6 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.neoforged.neoforge.event.tick.Phase;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import top.theillusivec4.curios.api.CuriosApi;
 import top.theillusivec4.curios.api.type.capability.ICuriosItemHandler;
@@ -105,19 +104,19 @@ public class CuriosSlotMod {
 
     // 配置：register 写入数据包后是否自动触发 /reload（默认 true）。
     // 关闭时只写映射，需玩家手动 /reload 或重进存档后生效，可避免 /reload 卡顿。
-    private static final ForgeConfigSpec.Builder CONFIG_BUILDER = new ForgeConfigSpec.Builder();
-    private static final ForgeConfigSpec.BooleanValue AUTO_RELOAD = CONFIG_BUILDER
+    private static final ModConfigSpec.Builder CONFIG_BUILDER = new ModConfigSpec.Builder();
+    private static final ModConfigSpec.BooleanValue AUTO_RELOAD = CONFIG_BUILDER
             .comment("register 指令写入数据包后是否自动触发 /reload。",
                     "true：写入后自动重载（立即生效，但 /reload 会卡一下）；",
                     "false：只写入映射，需玩家手动执行 /reload 或重进存档后生效（避免卡顿）。",
                     "默认：true")
             .define("autoReload", true);
-    private static final ForgeConfigSpec.IntValue SWEEP_INTERVAL_SECONDS = CONFIG_BUILDER
+    private static final ModConfigSpec.IntValue SWEEP_INTERVAL_SECONDS = CONFIG_BUILDER
             .comment("兜底扫描间隔（秒）。生成钩子已让新实体出生即为 1 个，此扫描仅用于兜底",
                     "register 之前就已存在的旧实体，可设得较疏以降低开销。设为 0 表示关闭兜底扫描。",
                     "范围 0~3600，默认：10 秒")
             .defineInRange("sweepIntervalSeconds", 10, 0, 3600);
-    private static final ForgeConfigSpec CONFIG_SPEC = CONFIG_BUILDER.build();
+    private static final ModConfigSpec CONFIG_SPEC = CONFIG_BUILDER.build();
 
     public static boolean autoReload() {
         return AUTO_RELOAD.get();
@@ -293,7 +292,7 @@ public class CuriosSlotMod {
     // onServerStarted 与 clear 后会自动把全局配置应用到当前存档（仅对未标记 globalApplied 的存档套用）。
 
     private static Path globalConfigRoot(MinecraftServer server) {
-        return server.getServerDirectory().toPath().resolve("curiosslot_global");
+        return server.getServerDirectory().resolve("curiosslot_global");
     }
 
     public static boolean hasGlobalConfig(MinecraftServer server) {
@@ -392,7 +391,7 @@ public class CuriosSlotMod {
     public static void resetEntitySlotsToDefault(LivingEntity le) {
         var inv = CuriosApi.getCuriosInventory(le);
         if (!inv.isPresent()) return;
-        ICuriosItemHandler handler = inv.resolve().orElse(null);
+        ICuriosItemHandler handler = inv.orElse(null);
         if (handler == null) return;
         for (Map.Entry<String, ICurioStacksHandler> en : handler.getCurios().entrySet()) {
             // 该实体的该槽位已被 set/add 手动留痕：尊重手动设置，不重置。
@@ -427,7 +426,7 @@ public class CuriosSlotMod {
         Map<String, Integer> defs = new LinkedHashMap<>();
         var inv = CuriosApi.getCuriosInventory(living);
         if (inv.isPresent()) {
-            ICuriosItemHandler h = inv.resolve().orElse(null);
+            ICuriosItemHandler h = inv.orElse(null);
             if (h != null) {
                 for (String s : h.getCurios().keySet()) {
                     defs.put(s, defaultCount(living.getType(), s));
@@ -471,7 +470,7 @@ public class CuriosSlotMod {
         MinecraftServer server = event.getServer();
         // 确保图标输入文件夹存在（游戏根目录 curiosslot_slots/icons/），方便玩家放入栏位图标
         try {
-            Files.createDirectories(server.getServerDirectory().toPath()
+            Files.createDirectories(server.getServerDirectory()
                     .resolve("curiosslot_slots").resolve("icons"));
         } catch (Exception ignored) {
         }
@@ -514,7 +513,7 @@ public class CuriosSlotMod {
             int def = defaultCount(type, slot);
             var inv = CuriosApi.getCuriosInventory(le);
             if (!inv.isPresent()) continue;
-            ICuriosItemHandler handler = inv.resolve().orElse(null);
+            ICuriosItemHandler handler = inv.orElse(null);
             if (handler == null) continue;
             var stacksOpt = handler.getStacksHandler(slot);
             if (stacksOpt.isEmpty()) continue;
@@ -531,7 +530,7 @@ public class CuriosSlotMod {
     // 因生成钩子已让新实体出生即为默认数量，稳态下几乎不会有重设动作，不会出现大批量重设卡顿。
     @SubscribeEvent
     public void onServerTick(ServerTickEvent event) {
-        if (event.getPhase() != Phase.END) return;
+        if (!(event instanceof ServerTickEvent.Post)) return;
 
         MinecraftServer server = event.getServer();
 
@@ -558,7 +557,7 @@ public class CuriosSlotMod {
                 if (TOUCHED.contains(keyOfEntity(le, slot))) continue; // 该个体已留痕，尊重手动设置
                 var inv = CuriosApi.getCuriosInventory(le);
                 if (!inv.isPresent()) continue;
-                ICuriosItemHandler handler = inv.resolve().orElse(null);
+                ICuriosItemHandler handler = inv.orElse(null);
                 if (handler == null) continue;
                 var stacksOpt = handler.getStacksHandler(slot);
                 if (stacksOpt.isEmpty()) continue;
@@ -579,7 +578,7 @@ public class CuriosSlotMod {
     /** 向单个客户端下发当前生成的 curiosslot_slots 资源包（服务端已有 zip 时），供其写盘加载。 */
     public static void sendResourcePackToClient(ServerPlayer sp) {
         try {
-            Path zip = sp.server.getServerDirectory().toPath()
+            Path zip = sp.server.getServerDirectory()
                     .resolve("resourcepacks").resolve("curiosslot_slots.zip");
             if (!Files.exists(zip)) return;
             PacketDistributor.sendToPlayer(sp,
@@ -747,7 +746,7 @@ public class CuriosSlotMod {
         Map<String, Integer> map = new LinkedHashMap<>();
         var inv = CuriosApi.getCuriosInventory(living);
         if (inv.isPresent()) {
-            ICuriosItemHandler handler = inv.resolve().orElse(null);
+            ICuriosItemHandler handler = inv.orElse(null);
             if (handler != null) {
                 for (Map.Entry<String, ICurioStacksHandler> e : handler.getCurios().entrySet()) {
                     map.put(e.getKey(), e.getValue().getSlots());
@@ -1136,7 +1135,7 @@ public class CuriosSlotMod {
             src.sendFailure(Component.literal("栏位 id 必须为小写字母/数字/下划线/连字符/点，长度 1~64。"));
             return 0;
         }
-        Path gameRoot = server.getServerDirectory().toPath();
+        Path gameRoot = server.getServerDirectory();
         Path iconsDir = gameRoot.resolve("curiosslot_slots").resolve("icons");
         Path iconSrc = iconsDir.resolve(id + ".png");
         if (!Files.exists(iconSrc)) {
@@ -1199,14 +1198,14 @@ public class CuriosSlotMod {
             }
 
             // 资源下发：专用服务器生成服务器资源包自动下发；单机/集成服务器生成客户端资源包并通知客户端启用
-            Path packsDir = server.getServerDirectory().toPath().resolve("resourcepacks");
+            Path packsDir = server.getServerDirectory().resolve("resourcepacks");
             Files.createDirectories(packsDir);
             zipAssets(packRoot, packsDir.resolve("curiosslot_slots.zip"));
             if (server instanceof DedicatedServer) {
                 server.getPackRepository().reload();
             } else {
                 // 单机：把资源包写进 options.txt 持久化启用（下次启动自动加载，原版机制最可靠），并即时尝试启用
-                addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
+                addToOptionsTxt(server.getServerDirectory().resolve("options.txt"));
                 if (src.getEntity() instanceof ServerPlayer sp) {
                     PacketDistributor.sendToPlayer(sp, new EnablePackPacket());
                 }
@@ -1287,7 +1286,7 @@ public class CuriosSlotMod {
     /** 服务端读取 icons 文件夹内的槽位图标文件名（去 .png 后缀），发给客户端注册界面。 */
     public static void sendSlotIcons(ServerPlayer sp) {
         try {
-            Path iconsDir = sp.server.getServerDirectory().toPath()
+            Path iconsDir = sp.server.getServerDirectory()
                     .resolve("curiosslot_slots").resolve("icons");
             List<String> ids = new ArrayList<>();
             if (Files.exists(iconsDir)) {
@@ -1320,7 +1319,7 @@ public class CuriosSlotMod {
             return 0;
         }
         try {
-            Path gameRoot = server.getServerDirectory().toPath();
+            Path gameRoot = server.getServerDirectory();
             Path packRoot = gameRoot.resolve("datapacks").resolve("curiosslot_slots");
             boolean any = false;
             Path slotFile = packRoot.resolve("data/curios/curios/slots").resolve(id + ".json");
@@ -1344,7 +1343,7 @@ public class CuriosSlotMod {
                 return 0;
             }
             // 重建资源包 zip（客户端图标/翻译移除）
-            Path packsDir = server.getServerDirectory().toPath().resolve("resourcepacks");
+            Path packsDir = server.getServerDirectory().resolve("resourcepacks");
             Path zip = packsDir.resolve("curiosslot_slots.zip");
             if (Files.exists(packRoot.resolve("pack.mcmeta"))) {
                 zipAssets(packRoot, zip);
@@ -1353,7 +1352,7 @@ public class CuriosSlotMod {
             if (server instanceof DedicatedServer) {
                 server.getPackRepository().reload();
             } else {
-                addToOptionsTxt(server.getServerDirectory().toPath().resolve("options.txt"));
+                addToOptionsTxt(server.getServerDirectory().resolve("options.txt"));
                 if (src.getEntity() instanceof ServerPlayer sp) {
                     PacketDistributor.sendToPlayer(sp, new EnablePackPacket());
                 }
@@ -1392,7 +1391,7 @@ public class CuriosSlotMod {
     /** 服务端读取全局数据包已注册槽位 id 列表，发给客户端清除界面。 */
     public static void sendRegisteredSlots(ServerPlayer sp) {
         try {
-            Path slotDir = sp.server.getServerDirectory().toPath()
+            Path slotDir = sp.server.getServerDirectory()
                     .resolve("datapacks").resolve("curiosslot_slots").resolve("data/curios/curios/slots");
             List<String> ids = new ArrayList<>();
             if (Files.exists(slotDir)) {
@@ -1425,7 +1424,7 @@ public class CuriosSlotMod {
         JsonObject obj = new JsonObject();
         try {
             Optional<net.minecraft.server.packs.resources.Resource> res = server.getResourceManager()
-                    .getResource(new ResourceLocation("curios", "lang/" + lang + ".json"));
+                    .getResource(ResourceLocation.fromNamespaceAndPath("curios", "lang/" + lang + ".json"));
             if (res.isPresent()) {
                 try (InputStream in = res.get().open()) {
                     JsonObject base = gson.fromJson(
@@ -1494,7 +1493,7 @@ public class CuriosSlotMod {
                 src.sendFailure(Component.literal("目标实体没有 Curios 饰品栏，仅玩家与 Curios 集成实体（如车万女仆）可用。"));
                 return 0;
             }
-            ICuriosItemHandler handler = inv.resolve().orElse(null);
+            ICuriosItemHandler handler = inv.orElse(null);
             if (handler == null) {
                 src.sendFailure(Component.literal("无法解析目标实体的 Curios 饰品栏。"));
                 return 0;

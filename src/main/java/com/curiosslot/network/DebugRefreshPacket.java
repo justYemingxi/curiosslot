@@ -3,6 +3,7 @@ package com.curiosslot.network;
 import com.curiosslot.screen.CuriosDebugScreen;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -30,7 +31,7 @@ public record DebugRefreshPacket(UUID uuid, String name,
             (buf, map) -> {
                 buf.writeInt(map.size());
                 for (Map.Entry<String, Integer> e : map.entrySet()) {
-                    buf.writeUtf(e.getKey());
+                    ByteBufCodecs.STRING_UTF8.encode(buf, e.getKey());
                     buf.writeInt(e.getValue());
                 }
             },
@@ -38,7 +39,7 @@ public record DebugRefreshPacket(UUID uuid, String name,
                 int n = buf.readInt();
                 Map<String, Integer> m = new LinkedHashMap<>();
                 for (int i = 0; i < n; i++) {
-                    m.put(buf.readUtf(64), buf.readInt());
+                    m.put(ByteBufCodecs.STRING_UTF8.decode(buf), buf.readInt());
                 }
                 return m;
             });
@@ -47,20 +48,20 @@ public record DebugRefreshPacket(UUID uuid, String name,
             (buf, list) -> {
                 buf.writeInt(list.size());
                 for (String s : list) {
-                    buf.writeUtf(s);
+                    ByteBufCodecs.STRING_UTF8.encode(buf, s);
                 }
             },
             (buf) -> {
                 int n = buf.readInt();
                 List<String> l = new ArrayList<>();
                 for (int i = 0; i < n; i++) {
-                    l.add(buf.readUtf(64));
+                    l.add(ByteBufCodecs.STRING_UTF8.decode(buf));
                 }
                 return l;
             });
 
     public static final StreamCodec<ByteBuf, DebugRefreshPacket> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.UUID, DebugRefreshPacket::uuid,
+            UUIDUtil.STREAM_CODEC, DebugRefreshPacket::uuid,
             ByteBufCodecs.STRING_UTF8, DebugRefreshPacket::name,
             INT_MAP, DebugRefreshPacket::existing,
             INT_MAP, DebugRefreshPacket::defaults,
@@ -73,7 +74,7 @@ public record DebugRefreshPacket(UUID uuid, String name,
         return TYPE;
     }
 
-    public static void handle(DebugRefreshPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(DebugRefreshPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc.screen instanceof CuriosDebugScreen s && s.getTargetUuid().equals(p.uuid())) {

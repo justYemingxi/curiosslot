@@ -31,7 +31,7 @@ public record SyncResourcePackPacket(byte[] zipBytes) implements CustomPacketPay
         return TYPE;
     }
 
-    public static void handle(SyncResourcePackPacket p, net.neoforged.neoforge.network.IPayloadContext context) {
+    public static void handle(SyncResourcePackPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             try {
                 Path packsDir = FMLPaths.GAMEDIR.get().resolve("resourcepacks");

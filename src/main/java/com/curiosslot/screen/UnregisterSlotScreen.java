@@ -101,11 +101,11 @@ public class UnregisterSlotScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mx, double my, double delta) {
+    public boolean mouseScrolled(double mx, double my, double horizontalAmount, double verticalAmount) {
         int m = slotIds.size();
         int maxRows = (HEIGHT - LIST_TOP - 62) / ROW_H;
         int cap = Math.max(0, m - maxRows);
-        scroll = Math.max(0, Math.min(cap, scroll - (int) delta));
+        scroll = Math.max(0, Math.min(cap, scroll - (int) verticalAmount));
         rebuildButtons();
         return true;
     }

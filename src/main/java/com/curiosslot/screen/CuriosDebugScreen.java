@@ -290,17 +290,17 @@ public class CuriosDebugScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mx, double my, double delta) {
+    public boolean mouseScrolled(double mx, double my, double horizontalAmount, double verticalAmount) {
         if (selectMode) {
             int m = creatableSlots.size();
             int maxRows = (LIST_BOTTOM - LIST_TOP) / ROW_H;
             int cap = Math.max(0, m - maxRows);
-            scrollCreatable = Math.max(0, Math.min(cap, scrollCreatable - (int) delta));
+            scrollCreatable = Math.max(0, Math.min(cap, scrollCreatable - (int) verticalAmount));
         } else {
             int m = existingSlots.size();
             int maxRows = (LIST_BOTTOM - LIST_TOP) / ROW_H;
             int cap = Math.max(0, m - maxRows);
-            scrollExisting = Math.max(0, Math.min(cap, scrollExisting - (int) delta));
+            scrollExisting = Math.max(0, Math.min(cap, scrollExisting - (int) verticalAmount));
         }
         rebuildButtons();
         return true;
