@@ -2,7 +2,7 @@ plugins {
     id 'eclipse'
     id 'idea'
     id 'maven-publish'
-    id 'net.neoforged.gradle' version '[7,8)'
+    id 'net.neoforged.moddev' version '1.0.24'
 }
 
 version = '1.4.1'
@@ -23,43 +23,19 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += '-Xlint:-removal'
 }
 
-minecraft {
-    // 官方映射 1.21.1
-    mappings channel: 'official', version: '1.21.1'
-
-    runs {
-        client {
-            workingDirectory project.file('run')
-            property 'neoforge.logging.markers', 'REGISTRIES'
-            property 'neoforge.logging.console.level', 'debug'
-            mods {
-                curiosslot {
-                    source sourceSets.main
-                }
-            }
-        }
-        server {
-            workingDirectory project.file('run')
-            property 'neoforge.logging.console.level', 'debug'
-            mods {
-                curiosslot {
-                    source sourceSets.main
-                }
-            }
-        }
-    }
+// ModDevGradle：版本声明后自动提供 neoforge 依赖与官方映射
+neoForge {
+    version = '21.1.263'
 }
 
 repositories {
-    // Curios 官方 maven（备用，编译依赖也走本地 libs）
+    // Curios 官方 maven（编译依赖）
     maven {
         url = 'https://maven.theillusivec4.top/'
     }
 }
 
 dependencies {
-    implementation "net.neoforged:neoforge:21.1.263"
-
     // Curios API：编译依赖（运行时由玩家装 Curios 提供）
     compileOnly "top.theillusivec4:curios-neoforge:9.5.1+1.21.1"
 }
