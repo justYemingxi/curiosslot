@@ -36,8 +36,9 @@ repositories {
 }
 
 dependencies {
-    // Curios API：编译依赖（运行时由玩家装 Curios 提供）
-    compileOnly "top.theillusivec4:curios-neoforge:9.5.1+1.21.1"
+    // Curios API：编译依赖（运行时由玩家装 Curios 提供）。
+    // 使用本地 NeoForge 版 jar（maven.theillusivec4.top 上该坐标拉不到，jar 随仓库分发供 CI 编译）。
+    compileOnly files('libs/curios-neoforge-9.5.1+1.21.1.jar')
 }
 
 jar {
