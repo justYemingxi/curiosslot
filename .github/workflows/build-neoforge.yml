@@ -17,6 +17,14 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Inspect NeoForge maven (debug)
+        run: |
+          echo "=== NeoGradle plugin metadata ==="
+          curl -sS -m 30 https://maven.neoforged.net/releases/net/neoforged/gradle/net.neoforged.gradle.gradle.plugin/maven-metadata.xml
+          echo ""
+          echo "=== neoforge dependency metadata (head) ==="
+          curl -sS -m 30 https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml | head -60
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
