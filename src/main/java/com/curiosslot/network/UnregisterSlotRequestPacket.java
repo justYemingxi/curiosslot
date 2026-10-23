@@ -28,7 +28,7 @@ public record UnregisterSlotRequestPacket(String id) implements CustomPacketPayl
     public static void handle(UnregisterSlotRequestPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
-                ServerPlayer sp = spc.getPlayer();
+                ServerPlayer sp = spc.player();
                 if (sp != null) {
                     CuriosSlotMod.unregisterSlotFromClient(sp, p.id());
                 }

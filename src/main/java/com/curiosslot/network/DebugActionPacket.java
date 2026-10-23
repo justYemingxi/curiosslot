@@ -52,7 +52,7 @@ public record DebugActionPacket(UUID uuid, String action, String slot, int count
     public static void handle(DebugActionPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
-                ServerPlayer sp = spc.getPlayer();
+                ServerPlayer sp = spc.player();
                 if (sp != null) {
                     handleServer(sp, p);
                 }

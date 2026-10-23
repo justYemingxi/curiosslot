@@ -31,7 +31,7 @@ public record RegisterSlotRequestPacket(String id, String displayName) implement
     public static void handle(RegisterSlotRequestPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
-                ServerPlayer sp = spc.getPlayer();
+                ServerPlayer sp = spc.player();
                 if (sp != null) {
                     CuriosSlotMod.registerSlotFromClient(sp, p.id(), p.displayName());
                 }

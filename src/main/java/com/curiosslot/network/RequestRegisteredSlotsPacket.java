@@ -28,7 +28,7 @@ public record RequestRegisteredSlotsPacket() implements CustomPacketPayload {
     public static void handle(RequestRegisteredSlotsPacket p, net.neoforged.neoforge.network.handling.IPayloadContext context) {
         context.enqueueWork(() -> {
             if (context instanceof ServerPayloadContext spc) {
-                ServerPlayer sp = spc.getPlayer();
+                ServerPlayer sp = spc.player();
                 if (sp != null) {
                     CuriosSlotMod.sendRegisteredSlots(sp);
                 }
