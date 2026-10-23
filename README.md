@@ -1,6 +1,6 @@
 # Curios Slot
 
-一个轻量 Forge 模组（Minecraft **1.20.1** / Forge **47.x**），允许你在游戏内**通过指令为实体添加或设置 Curios 饰品栏位**。
+一个轻量模组，支持 **Minecraft 1.20.1 / Forge 47.x** 与 **Minecraft 1.21.1 / NeoForge 21.1** 双平台，允许你在游戏内**通过指令为实体添加或设置 Curios 饰品栏位**。
 
 - 为**玩家**、**车万女仆**等 Curios 集成实体调整饰品栏位；
 - 可给**普通生物**（牛、僵尸等）创建原本不存在的饰品栏位（基于 Curios 数据包机制）；
@@ -9,18 +9,22 @@
 
 ## 依赖
 
-| 模组 | 版本 | 是否必装 |
-|---|---|---|
-| Minecraft Forge | 47.x (1.20.1) | 必装 |
-| Curios API | 5.x (1.20.1) | **必装** |
-| 车万女仆 | 1.5.x (1.20.1) | 选装（加女仆栏位时需要） |
+| 平台 | 模组 | 版本 | 是否必装 |
+|---|---|---|---|
+| Forge | Minecraft Forge | 47.x (1.20.1) | 必装 |
+| Forge | Curios API | 5.x (1.20.1) | **必装** |
+| NeoForge | Minecraft NeoForge | 21.1 (1.21.1) | 必装 |
+| NeoForge | Curios API (NeoForge) | 9.5.1 (1.21.1) | **必装** |
+| 双平台 | 车万女仆 | 1.5.x | 选装（加女仆栏位时需要） |
 
 > 本模组仅依赖 Curios API；没有车万女仆时，也可给其他生物实体加栏位。
 
 ## 安装
 
-1. 把 `curiosslot-1.4.0.jar` 放进 `mods` 文件夹；
-2. 启动游戏（需要 Curios API 已在 mods 中）；
+1. 按你的平台把对应 jar 放进 `mods` 文件夹：
+   - Forge 1.20.1：`curiosslot-1.4.1.jar`
+   - NeoForge 1.21.1：`curiosslot-1.0.0-beta.1-neoforge.jar`
+2. 启动游戏（需要对应平台的 Curios API 已在 mods 中）；
 3. 进世界后使用下方指令。
 
 > **客户端可选**：本模组**服务端为主、客户端可选**。未安装本模组的客户端也能正常连接并执行指令；但 `/curiosslot open` 的调试界面、以及「饰品配置手杖」右键打开的配置界面，需要客户端也安装本模组才能显示（未装时 `open` 保持静默，不发提示）。
@@ -157,15 +161,16 @@ necklace / ring / feet / scroll / spellbook / accessory
 
 ## 构建（可选）
 
-本工程使用 ForgeGradle。源码目录包含 Gradle Wrapper：
+本工程支持 **Forge 与 NeoForge 双平台**构建，源码目录包含 Gradle Wrapper：
+
+- **Forge 1.20.1 版**（`main` 分支）：ForgeGradle 构建，产物 `build/libs/curiosslot-1.4.1.jar`
+- **NeoForge 1.21.1 版**（`neoforge-1.21.1` 分支）：ModDevGradle 构建，产物 `build/libs/curiosslot-1.0.0-beta.1-neoforge.jar`
 
 ```
 gradlew build
 ```
 
-产物位于 `build/libs/curiosslot-1.4.0.jar`。
-
-> 注意：本仓库**不含** `libs/`（Curios 的 jar 不在此公开分发，避免分发他人模组）。编译依赖为 `compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))`，如需从源码构建，请自行把对应版本的 Curios jar 放入 `libs/` 目录后执行 `gradlew build`。已编译好的 jar 可直接使用，无需自己构建。
+> 注意：本仓库**不含** `libs/`（Curios 的 jar 不在此公开分发，避免分发他人模组）。Forge 版编译依赖 `compileOnly fg.deobf(files('libs/curios-forge-5.14.1+1.20.1.jar'))`；NeoForge 版依赖 `compileOnly files('libs/curios-neoforge-9.5.1+1.21.1.jar')`。如需从源码构建，请自行把对应版本的 Curios jar 放入 `libs/` 目录后执行 `gradlew build`。已编译好的 jar 可直接使用，无需自己构建。
 
 ## 许可证
 
