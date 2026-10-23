@@ -529,8 +529,7 @@ public class CuriosSlotMod {
     // 数据来自缓存（仅 register/set/add/首次 tick 刷新），实体用按类型索引查询，开销很小；
     // 因生成钩子已让新实体出生即为默认数量，稳态下几乎不会有重设动作，不会出现大批量重设卡顿。
     @SubscribeEvent
-    public void onServerTick(ServerTickEvent event) {
-        if (!(event instanceof ServerTickEvent.Post)) return;
+    public void onServerTick(ServerTickEvent.Post event) {
 
         MinecraftServer server = event.getServer();
 
